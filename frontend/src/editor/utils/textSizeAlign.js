@@ -1,0 +1,589 @@
+import { isOverImageContext } from './overlayStacking'
+import { getComp } from './editorUtils'
+
+/**
+ * Flow-button resize safety for in-card CTAs only.
+ * Absolute overlays on images use data-tc-absolute=1 and are left alone.
+ */
+
+const TEXT_TAGS = new Set([
+  'button',
+  'a',
+  'p',
+  'span',
+  'h1',
+  'h2',
+  'h3',
+  'h4',
+  'h5',
+  'h6',
+  'label',
+  'li',
+])
+
+const FLOW_ACTIONS = new Set(['SUBSCRIBE', 'SUBSCRIBE_ROUTE', 'CONFIRM', 'CHAIN'])
+const FLOW_OTP = new Set(['send', 'verify'])
+
+export const MIN_BTN_HEIGHT = 44
+/** Horizontal shrink floor — must stay well below typical CTA widths. */
+export const MIN_BTN_WIDTH = 48
+
+function parsePx(value) {
+  if (value == null || value === '') return null
+  const n = parseFloat(String(value))
+  return Number.isFinite(n) ? n : null
+}
+
+export function isButtonLikeComponent(component) {
+  const comp = getComp(component)
+  if (!comp) return false
+  const tag = (typeof comp.get === 'function' ? comp.get('tagName') : comp.tagName) || ''
+  const type = (typeof comp.get === 'function' ? comp.get('type') : comp.type) || ''
+  const attrs = comp.getAttributes?.() || {}
+  const tcType = attrs['data-tc-type']
+  const tagLower = tag.toLowerCase()
+  return (
+    tagLower === 'button' ||
+    type === 'link' ||
+    tcType === 'button' ||
+    (tagLower === 'a' && tcType !== 'hotspot')
+  )
+}
+
+export function isTextSizedComponent(component) {
+  const comp = getComp(component)
+  if (!comp) return false
+  const tag = (typeof comp.get === 'function' ? comp.get('tagName') : comp.tagName) || ''
+  const type = (typeof comp.get === 'function' ? comp.get('type') : comp.type) || ''
+  const attrs = comp.getAttributes?.() || {}
+  const tcType = attrs['data-tc-type']
+
+  if (tcType === 'hotspot') return false
+  if (isButtonLikeComponent(comp)) return true
+  if (TEXT_TAGS.has(tag.toLowerCase()) || type === 'text') return true
+  return false
+}
+
+export function isFlowLayoutButton(component) {
+  const comp = getComp(component)
+  if (!comp || !isButtonLikeComponent(comp)) return false
+  const attrs = comp.getAttributes?.() || {}
+  if (attrs['data-tc-type'] === 'hotspot') return false
+
+  return true
+}
+
+/**
+ * Hotspots, marked image overlays, or absolute controls sitting on an image.
+ *
+ * IMPORTANT: bare `position:absolute` + top/left is NOT enough. Grapes Canva-drag
+ * often leaves those styles on in-card OTP/SUBSCRIBE CTAs without data-tc-absolute.
+ * Preview then positions them against page-wrapper (full width) → button floats
+ * outside the card while the canvas still looks fine (class says relative).
+ * drag:end must call markAsAbsoluteOverlay so real overlays get the flag.
+ */
+export function wasIntentionallyAbsolute(component) {
+  const comp = getComp(component)
+  if (!comp) return false
+  const attrs = comp.getAttributes?.() || {}
+  if (attrs['data-tc-type'] === 'hotspot') return true
+  if (attrs['data-tc-absolute'] === '1' || attrs['data-tc-absolute'] === 'true') return true
+
+  const style = comp.getStyle?.() || {}
+  const pos = String(style.position || '').toLowerCase()
+  if (pos === 'absolute' && isOverImageContext(comp)) return true
+  return false
+}
+
+function stripAbsoluteFromEl(el) {
+  if (!el?.style) return
+  if (el.style.position === 'absolute' || el.style.position === 'fixed') {
+    el.style.position = ''
+    el.style.top = ''
+    el.style.left = ''
+    el.style.right = ''
+    el.style.bottom = ''
+    el.style.zIndex = ''
+  }
+}
+
+/** Clear leftover HTML style="" absolute geometry (wins over CssComposer classes). */
+function stripAbsoluteStyleAttribute(component) {
+  const attrs = component.getAttributes?.() || {}
+  const raw = attrs.style
+  if (raw == null || raw === '') return
+  const next = String(raw)
+    .replace(/(?:^|;)\s*position\s*:\s*absolute\s*/gi, ';')
+    .replace(/(?:^|;)\s*position\s*:\s*fixed\s*/gi, ';')
+    .replace(/(?:^|;)\s*top\s*:\s*[^;]+/gi, ';')
+    .replace(/(?:^|;)\s*left\s*:\s*[^;]+/gi, ';')
+    .replace(/(?:^|;)\s*right\s*:\s*[^;]+/gi, ';')
+    .replace(/(?:^|;)\s*bottom\s*:\s*[^;]+/gi, ';')
+    .replace(/(?:^|;)\s*z-index\s*:\s*[^;]+/gi, ';')
+    .replace(/;;+/g, ';')
+    .replace(/^;|;$/g, '')
+    .trim()
+  if (next === String(raw).trim()) return
+  try {
+    const patched = { ...attrs }
+    if (next) patched.style = next
+    else delete patched.style
+    component.setAttributes?.(patched)
+  } catch (_) {
+    /* noop */
+  }
+}
+
+/** Prefer an explicit resized width; default full-bleed CTA stays 100%. */
+function resolveFlowButtonWidth(style = {}, el = null) {
+  const raw = String(style.width || '').trim()
+  if (raw === '100%' || /^100(\.0+)?%$/.test(raw)) return '100%'
+
+  const px = parsePx(raw)
+  if (px != null && String(raw).includes('%') && el && el.offsetWidth > 0) {
+    return `${Math.max(MIN_BTN_WIDTH, Math.round(el.offsetWidth))}px`
+  }
+  if (px != null && String(raw).endsWith('px')) {
+    return `${Math.max(MIN_BTN_WIDTH, Math.round(px))}px`
+  }
+  if (raw && raw !== 'auto') {
+    return raw
+  }
+
+  if (el) {
+    const inlineW = String(el.style?.width || '').trim()
+    if (inlineW && inlineW !== 'auto') {
+      if (/^100(\.0+)?%$/.test(inlineW)) return '100%'
+      const inlinePx = parsePx(inlineW)
+      if (inlinePx != null) return `${Math.max(MIN_BTN_WIDTH, Math.round(inlinePx))}px`
+      return inlineW
+    }
+    try {
+      if (el.parentElement && el.offsetWidth > 0 && el.parentElement.offsetWidth > 0) {
+        if (el.offsetWidth >= el.parentElement.offsetWidth * 0.85) {
+          return '100%'
+        }
+      }
+    } catch (_) {}
+  }
+
+  if (!raw || raw === 'auto') return 'auto'
+  return raw
+}
+
+function syncFlowButtonDom(el, minHeightPx, width = '100%') {
+  if (!el?.style) return
+  stripAbsoluteFromEl(el)
+  const custom = width !== '100%'
+  el.style.position = 'relative'
+  el.style.width = width
+  el.style.maxWidth = '100%'
+  // Floor only — never lock min-width to current width (that blocks shrink).
+  el.style.minWidth = custom ? `${MIN_BTN_WIDTH}px` : '0'
+  el.style.height = ''
+  el.style.minHeight = `${minHeightPx}px`
+  el.style.boxSizing = 'border-box'
+  // inline-flex + align-self so parent flex stretch cannot force full row width
+  if (el.style.display !== 'none') {
+    el.style.display = custom ? 'inline-flex' : 'flex'
+  }
+  el.style.alignItems = 'center'
+  el.style.justifyContent = 'center'
+  el.style.alignSelf = custom ? 'center' : 'stretch'
+  el.style.flexShrink = '0'
+  el.style.overflow = 'visible'
+  if (el.style.visibility !== 'hidden') {
+    el.style.visibility = 'visible'
+  }
+  if (el.style.opacity === '0') el.style.opacity = '1'
+  el.style.top = ''
+  el.style.left = ''
+  el.style.right = ''
+  el.style.bottom = ''
+  el.style.margin = ''
+  el.style.zIndex = ''
+}
+
+/**
+ * In-card CTA only — never run on image overlays (data-tc-absolute / over image).
+ * Idempotent: skip setStyle when already in-flow so component:styleUpdate cannot loop.
+ * Always strips leftover style="" absolute (Grapes often keeps class=relative + attr absolute).
+ */
+export function keepFlowButtonInFlow(component) {
+  const comp = getComp(component)
+  if (!comp || !isFlowLayoutButton(comp)) return
+  if (wasIntentionallyAbsolute(comp)) return
+
+  stripAbsoluteStyleAttribute(comp)
+
+  const prev = comp.getStyle?.() || {}
+  let minH = parsePx(prev['min-height']) ?? parsePx(prev.height) ?? MIN_BTN_HEIGHT
+  if (!Number.isFinite(minH) || minH < MIN_BTN_HEIGHT) minH = MIN_BTN_HEIGHT
+
+  const el = typeof component.getEl === 'function' ? component.getEl() : null
+  const width = resolveFlowButtonWidth(prev, el)
+  const customWidth = width !== '100%'
+  // Reasonable shrink floor — never equal current width (that made handles refuse to shrink).
+  const minWidth = customWidth ? `${MIN_BTN_WIDTH}px` : '0'
+  const alignSelf = customWidth ? 'center' : 'stretch'
+
+  const pos = String(prev.position || '').toLowerCase()
+  const hasAbsGeo =
+    pos === 'absolute' ||
+    pos === 'fixed' ||
+    prev.top != null ||
+    prev.left != null ||
+    prev.right != null ||
+    prev.bottom != null
+
+  const elPos = String(el?.style?.position || '').toLowerCase()
+  const elHasAbs =
+    elPos === 'absolute' ||
+    elPos === 'fixed' ||
+    !!(el?.style?.top || el?.style?.left || el?.style?.right || el?.style?.bottom)
+
+  const alreadyInFlow =
+    !hasAbsGeo &&
+    !elHasAbs &&
+    (pos === 'relative' || pos === 'static' || pos === '') &&
+    String(prev.width || '') === width &&
+    String(prev['min-height'] || '') === `${minH}px` &&
+    String(prev['min-width'] || '') === minWidth &&
+    String(prev.display || '') === (customWidth ? 'inline-flex' : 'flex') &&
+    String(prev['align-self'] || '') === alignSelf
+
+  if (alreadyInFlow) return
+
+  const style = {
+    position: 'relative',
+    width,
+    'max-width': '100%',
+    'min-width': minWidth,
+    'min-height': `${minH}px`,
+    display: customWidth ? 'inline-flex' : 'flex',
+    'align-items': 'center',
+    'justify-content': 'center',
+    'align-self': alignSelf,
+    'flex-shrink': '0',
+    'box-sizing': 'border-box',
+    overflow: 'visible',
+    visibility: 'visible',
+    'text-align': prev['text-align'] || 'center',
+  }
+
+  for (const key of [
+    'background',
+    'background-color',
+    'color',
+    'border',
+    'border-radius',
+    'padding',
+    'font-size',
+    'font-weight',
+    'font-family',
+    'box-shadow',
+    'letter-spacing',
+    'text-transform',
+    'line-height',
+  ]) {
+    if (prev[key] != null && prev[key] !== '') style[key] = prev[key]
+  }
+
+  // Ensure button styling is preserved across device viewports
+  const hasClasses = (component.getClasses?.() || []).length > 0
+  if (!hasClasses) {
+    if (!style['background-color'] && !style.background) {
+      style['background-color'] = '#2563eb'
+    }
+    if (!style.color) {
+      style.color = '#ffffff'
+    }
+    if (!style['border-radius']) {
+      style['border-radius'] = '8px'
+    }
+    if (!style.padding) {
+      style.padding = '12px 24px'
+    }
+    if (!style['font-weight']) {
+      style['font-weight'] = '600'
+    }
+    if (!style['text-decoration']) {
+      style['text-decoration'] = 'none'
+    }
+  }
+
+  component.setStyle(style)
+  try {
+    component.removeStyle?.('top')
+    component.removeStyle?.('left')
+    component.removeStyle?.('right')
+    component.removeStyle?.('bottom')
+    component.removeStyle?.('z-index')
+    component.removeStyle?.('height')
+  } catch (_) {
+    /* noop */
+  }
+
+  syncFlowButtonDom(el, minH, width)
+}
+
+export function enforceFlowButtonSize(component) {
+  keepFlowButtonInFlow(component)
+}
+
+/** In-flow CTAs: width + min-height via corners and edges. Overlays use full resizer. */
+export const FLOW_BUTTON_RESIZABLE = {
+  tl: 1,
+  tc: 1,
+  tr: 1,
+  cl: 1,
+  cr: 1,
+  bl: 1,
+  bc: 1,
+  br: 1,
+  // minDim applies to both axes; keep near height floor (width has its own MIN_BTN_WIDTH in heal).
+  minDim: MIN_BTN_WIDTH,
+  ratioDefault: 0,
+  // Force px — inheriting unit from width:100% made Grapes write % and fight shrink.
+  unitWidth: 'px',
+  unitHeight: 'px',
+  currentUnit: 0,
+  keyWidth: 'width',
+  keyHeight: 'min-height',
+}
+
+export const OVERLAY_BUTTON_RESIZABLE = {
+  tl: 1,
+  tc: 1,
+  tr: 1,
+  cl: 1,
+  cr: 1,
+  bl: 1,
+  bc: 1,
+  br: 1,
+  minDim: 24,
+  ratioDefault: 0,
+}
+
+export function configureFlowButtonResizable(component) {
+  const comp = getComp(component)
+  if (!comp || !isFlowLayoutButton(comp)) return
+  if (wasIntentionallyAbsolute(comp)) {
+    comp.set('resizable', OVERLAY_BUTTON_RESIZABLE)
+    return
+  }
+  comp.set('resizable', FLOW_BUTTON_RESIZABLE)
+}
+
+const BLOCK_CONTAINER_TAGS = new Set([
+  'section',
+  'header',
+  'footer',
+  'nav',
+  'main',
+  'div',
+  'article',
+  'aside',
+  'form',
+])
+
+/** In-flow blocks/sections: grow length via min-height so content is not clipped. */
+export const FLOW_BLOCK_RESIZABLE = {
+  tl: 1,
+  tc: 1,
+  tr: 1,
+  cl: 1,
+  cr: 1,
+  bl: 1,
+  bc: 1,
+  br: 1,
+  minDim: 40,
+  ratioDefault: 0,
+  keyHeight: 'min-height',
+}
+
+/** Absolute overlays keep height (not min-height) so freeform boxes resize as expected. */
+export const ABSOLUTE_BLOCK_RESIZABLE = {
+  tl: 1,
+  tc: 1,
+  tr: 1,
+  cl: 1,
+  cr: 1,
+  bl: 1,
+  bc: 1,
+  br: 1,
+  minDim: 40,
+  ratioDefault: 0,
+}
+
+/** Sections / generic containers users expect to stretch — not text, CTAs, images, hotspots. */
+export function isResizableBlockContainer(component) {
+  const comp = getComp(component)
+  if (!comp) return false
+  if (isButtonLikeComponent(comp) || isFlowLayoutButton(comp)) return false
+
+  const tag = (typeof comp.get === 'function' ? comp.get('tagName') : comp.tagName) || ''
+  const type = (typeof comp.get === 'function' ? comp.get('type') : comp.type) || ''
+  const attrs = comp.getAttributes?.() || {}
+  const tcType = attrs['data-tc-type']
+  const tagLower = tag.toLowerCase()
+
+  if (type === 'wrapper' || tagLower === 'body' || tagLower === 'html') return false
+  if (tcType === 'hotspot' || tcType === 'button' || tcType === 'image') return false
+  if (type === 'image' || tagLower === 'img') return false
+  if (TEXT_TAGS.has(tagLower) || type === 'text') return false
+
+  if (tcType === 'section' || tcType === 'image-banner') return true
+  return BLOCK_CONTAINER_TAGS.has(tagLower)
+}
+
+export function configureBlockResizable(component) {
+  const comp = getComp(component)
+  if (!comp || !isResizableBlockContainer(comp)) return
+  const style = comp.getStyle?.() || {}
+  const isAbs =
+    String(style.position || '').toLowerCase() === 'absolute' ||
+    comp.getAttributes?.()?.['data-tc-absolute'] === '1'
+  comp.set('resizable', isAbs ? ABSOLUTE_BLOCK_RESIZABLE : FLOW_BLOCK_RESIZABLE)
+}
+
+export function applyTextSizeAlignment(component, opts = {}) {
+  const comp = getComp(component)
+  if (!comp || typeof comp.addStyle !== 'function') return
+  if (!isTextSizedComponent(comp)) return
+
+  if (isFlowLayoutButton(comp) && !wasIntentionallyAbsolute(comp)) {
+    keepFlowButtonInFlow(comp)
+    return
+  }
+
+  const style = comp.getStyle?.() || {}
+  const heightPx = parsePx(style.height) ?? parsePx(style['min-height'])
+  if (!opts.force && (heightPx == null || heightPx <= 0)) return
+
+  const buttonLike = isButtonLikeComponent(comp)
+  const patch = {
+    'box-sizing': 'border-box',
+    'line-height': '1.25',
+    overflow: 'visible',
+  }
+
+  if (buttonLike) {
+    patch.display = 'inline-flex'
+    patch['align-items'] = 'center'
+    patch['justify-content'] = 'center'
+    patch['text-align'] = style['text-align'] || 'center'
+    if (heightPx < MIN_BTN_HEIGHT) patch['min-height'] = `${MIN_BTN_HEIGHT}px`
+  } else {
+    patch.display = 'flex'
+    patch['align-items'] = 'center'
+    patch['justify-content'] =
+      style['text-align'] === 'right'
+        ? 'flex-end'
+        : style['text-align'] === 'center'
+          ? 'center'
+          : 'flex-start'
+  }
+
+  comp.addStyle(patch)
+}
+
+export function healFlowButtonsInEditor(editor) {
+  const wrapper = editor?.getWrapper?.()
+  if (!wrapper) return 0
+  let healed = 0
+  const walk = (cmp) => {
+    if (isFlowLayoutButton(cmp)) {
+      if (wasIntentionallyAbsolute(cmp)) {
+        configureFlowButtonResizable(cmp)
+      } else {
+        keepFlowButtonInFlow(cmp)
+        configureFlowButtonResizable(cmp)
+        healed += 1
+      }
+    } else if (isTextSizedComponent(cmp) && !wasIntentionallyAbsolute(cmp)) {
+      stripAbsoluteStyleAttribute(cmp)
+      const st = cmp.getStyle?.() || {}
+      if (st.position === 'absolute' || st.position === 'fixed' || st.top != null || st.left != null) {
+        cmp.addStyle({ position: 'relative' })
+        cmp.removeStyle?.('top')
+        cmp.removeStyle?.('left')
+        cmp.removeStyle?.('right')
+        cmp.removeStyle?.('bottom')
+        cmp.removeStyle?.('z-index')
+        healed += 1
+      }
+    }
+    cmp.components?.()?.forEach?.(walk)
+  }
+  walk(wrapper)
+  return healed
+}
+
+/**
+ * Live funnel / Preview: strip accidental absolute px boxes on in-card CTAs and text blocks.
+ * Real image overlays keep data-tc-absolute="1" and are left alone.
+ */
+export function healLiveFlowButtons(root) {
+  if (!root?.querySelectorAll) return 0
+  let healed = 0
+  const nodes = root.querySelectorAll(
+    'button, a, p, span, h1, h2, h3, h4, h5, h6, [data-action], [data-otp-action]',
+  )
+  nodes.forEach((el) => {
+    try {
+      if (el.getAttribute('data-tc-type') === 'hotspot') return
+      if (
+        el.getAttribute('data-tc-absolute') === '1' ||
+        el.getAttribute('data-tc-absolute') === 'true'
+      ) {
+        return
+      }
+      const inlinePos = String(el.style?.position || '').toLowerCase()
+      if (inlinePos === 'absolute' && (el.closest?.('[data-tc-type="image-banner"]') || el.parentElement?.querySelector?.('img'))) {
+        return
+      }
+      const cs = el.ownerDocument?.defaultView?.getComputedStyle?.(el)
+      const computedPos = String(cs?.position || '').toLowerCase()
+      const isAbs = inlinePos === 'absolute' || inlinePos === 'fixed' || computedPos === 'absolute'
+      if (!isAbs && !el.style.top && !el.style.left) return
+
+      el.style.position = 'relative'
+      el.style.top = ''
+      el.style.left = ''
+      el.style.right = ''
+      el.style.bottom = ''
+      el.style.zIndex = ''
+      if (el.tagName === 'BUTTON' || el.tagName === 'A' || el.getAttribute('data-action')) {
+        el.style.width = el.style.width || '100%'
+        el.style.maxWidth = '100%'
+        el.style.minWidth = '0'
+        el.style.display = el.style.display || 'inline-flex'
+        el.style.alignItems = el.style.alignItems || 'center'
+        el.style.justifyContent = el.style.justifyContent || 'center'
+        el.style.alignSelf = 'stretch'
+        el.style.boxSizing = 'border-box'
+        if (!el.style.minHeight) el.style.minHeight = `${MIN_BTN_HEIGHT}px`
+      }
+      healed += 1
+    } catch (_) {
+      /* noop */
+    }
+  })
+  return healed
+}
+
+export const TEXT_SIZE_ALIGN_CANVAS_CSS = `
+  button.flow-btn:not([data-tc-absolute="1"]),
+  .flow-btn:not([data-tc-absolute="1"]),
+  button[data-action="SUBSCRIBE"]:not([data-tc-absolute="1"]),
+  button[data-action="SUBSCRIBE_ROUTE"]:not([data-tc-absolute="1"]),
+  button[data-action="CONFIRM"]:not([data-tc-absolute="1"]),
+  button[data-otp-action]:not([data-tc-absolute="1"]) {
+    box-sizing: border-box !important;
+    max-width: 100% !important;
+    /* Floor only — do not !important a large min-width (blocks shrink). */
+    min-width: 0 !important;
+    min-height: ${MIN_BTN_HEIGHT}px;
+  }
+`

@@ -1,0 +1,252 @@
+import { asyncHandler } from '../../common/middleware/asyncHandler.js';
+import { otpService } from './otp.service.js';
+import { smsProviderManager } from './providers/sms-provider.manager.js';
+import { getSuccessRule } from './providers/partner.provider.js';
+import { orangeBfProvider } from '../flow/orange-bf.provider.js';
+
+const parseConfigPayload = (body) => {
+  if (body?.config && typeof body.config === 'string') {
+    try {
+      return JSON.parse(body.config);
+    } catch {
+      return {};
+    }
+  }
+  if (body?.config && typeof body.config === 'object') {
+    return body.config;
+  }
+  return {};
+};
+
+const clientIpFromReq = (req) => {
+  const clientIp =
+    req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+  return Array.isArray(clientIp) ? clientIp[0] : clientIp;
+};
+
+/** Prefer query (partner-style msisdn/otp), fall back to JSON body. */
+const pickExposeField = (req, ...keys) => {
+  const q = req.query || {};
+  const b = req.body || {};
+  for (const key of keys) {
+    const fromQuery = q[key];
+    if (fromQuery != null && String(fromQuery).trim() !== '') {
+      return String(fromQuery).trim();
+    }
+  }
+  for (const key of keys) {
+    const fromBody = b[key];
+    if (fromBody != null && String(fromBody).trim() !== '') {
+      return String(fromBody).trim();
+    }
+  }
+  return '';
+};
+
+export const otpController = {
+  send: asyncHandler(async (req, res) => {
+    const body = req.body || {};
+    const data = await otpService.sendOtp(
+      {
+        phone: body.phone,
+        campaignId: body.campaignId,
+        visitId: body.visitId,
+        pack: body.pack,
+      },
+      clientIpFromReq(req),
+    );
+    res.json(data);
+  }),
+
+  verify: asyncHandler(async (req, res) => {
+    const body = req.body || {};
+    const data = await otpService.verifyOtp(
+      {
+        phone: body.phone,
+        otpCode: body.otpCode || body.otp,
+        otp: body.otp || body.otpCode,
+        visitId: body.visitId,
+        campaignId: body.campaignId,
+      },
+      clientIpFromReq(req),
+    );
+    res.json(data);
+  }),
+
+  exposeSend: asyncHandler(async (req, res) => {
+    const campaignId = req.params.campaignId;
+    const vendorId =
+      req.params.vendorId || pickExposeField(req, 'vendorId', 'vid');
+    const phone = pickExposeField(req, 'msisdn', 'phone');
+    const pack = pickExposeField(req, 'pack') || 'daily';
+    const data = await otpService.exposeSendOtp(
+      {
+        campaignId,
+        vendorId,
+        phone,
+        pack,
+      },
+      clientIpFromReq(req),
+      {
+        requestUrl: `${req.protocol}://${req.get('host')}${req.originalUrl}`,
+      },
+    );
+    res.json(data);
+  }),
+
+  exposeVerify: asyncHandler(async (req, res) => {
+    const campaignId = req.params.campaignId;
+    const vendorId =
+      req.params.vendorId || pickExposeField(req, 'vendorId', 'vid');
+    const phone = pickExposeField(req, 'msisdn', 'phone');
+    const otp = pickExposeField(req, 'otp', 'otpCode', 'pin');
+    const data = await otpService.exposeVerifyOtp(
+      {
+        campaignId,
+        vendorId,
+        phone,
+        otpCode: otp,
+        otp,
+      },
+      clientIpFromReq(req),
+      {
+        requestUrl: `${req.protocol}://${req.get('host')}${req.originalUrl}`,
+      },
+    );
+    res.json(data);
+  }),
+
+  testSend: asyncHandler(async (req, res) => {
+    const body = req.body || {};
+    const phone = String(body.phone || '').trim();
+    if (!phone) {
+      const err = new Error('phone is required');
+      err.statusCode = 400;
+      throw err;
+    }
+
+    const providerConfig = parseConfigPayload(body);
+    const provider = smsProviderManager.getProviderByName('partner');
+    const successRule = getSuccessRule(providerConfig);
+
+    const result = await provider.sendOtp(phone, '', providerConfig, {
+      campaignId: body.campaignId,
+      campaignName: 'test',
+      pack: body.pack || 'daily',
+    });
+
+    res.json({
+      sent: Boolean(result?.success),
+      ok: Boolean(result?.success),
+      provider: 'partner',
+      successRule,
+      responseCode: result?.responseCode ?? null,
+      providerRequestId: result?.providerRequestId ?? null,
+      message: result?.message || result?.error || null,
+      error: result?.success ? null : result?.error || 'Send failed',
+      httpStatus: result?.httpStatus ?? null,
+      rawResponse: result?.rawResponse ?? null,
+    });
+  }),
+
+  testVerify: asyncHandler(async (req, res) => {
+    const body = req.body || {};
+    const phone = String(body.phone || '').trim();
+    const otp = String(body.otp || body.otpCode || '').trim();
+    if (!phone || !otp) {
+      const err = new Error('phone and otp are required');
+      err.statusCode = 400;
+      throw err;
+    }
+
+    const providerConfig = parseConfigPayload(body);
+    const provider = smsProviderManager.getProviderByName('partner');
+    const successRule = getSuccessRule(providerConfig);
+
+    const result = await provider.verifyOtp(
+      phone,
+      otp,
+      body.providerRequestId || '',
+      providerConfig,
+    );
+
+    res.json({
+      verified: Boolean(result?.success),
+      ok: Boolean(result?.success),
+      provider: 'partner',
+      successRule,
+      responseCode: result?.responseCode ?? null,
+      message: result?.message || result?.error || null,
+      error: result?.success ? null : result?.error || 'Verify failed',
+      httpStatus: result?.httpStatus ?? null,
+      rawResponse: result?.rawResponse ?? null,
+    });
+  }),
+
+  testSync: asyncHandler(async (req, res) => {
+    const body = req.body || {};
+    const phone = String(body.phone || '').trim();
+    if (!phone) {
+      const err = new Error('phone is required');
+      err.statusCode = 400;
+      throw err;
+    }
+
+    const providerConfig = parseConfigPayload(body);
+    const result = await orangeBfProvider.syncSubscription({
+      msisdn: phone,
+      subServiceId: providerConfig.syncSubServiceId || providerConfig.subServiceId,
+      serviceId: providerConfig.syncServiceId || providerConfig.serviceId,
+      cpId: providerConfig.syncCpId || providerConfig.cpId,
+      channel: providerConfig.syncChannel || providerConfig.channel,
+      country: providerConfig.syncCountry || providerConfig.country,
+      operator: providerConfig.syncOperator || providerConfig.operator,
+      reqType: providerConfig.syncReqType != null ? providerConfig.syncReqType : 1,
+      config: providerConfig,
+    });
+
+    res.json({
+      success: Boolean(result?.success),
+      ok: Boolean(result?.success),
+      provider: 'orange_bf_sync',
+      responseCode: result?.responseCode ?? null,
+      message: result?.responseMessage || result?.message || (result?.success ? 'Subscription sync successful' : 'Subscription sync failed'),
+      httpStatus: result?.httpStatus ?? null,
+      rawResponse: result?.rawResponse ?? null,
+      requestUrl: result?.requestUrl ?? null,
+      requestParams: result?.requestParams ?? null,
+      requestBody: result?.requestBody ?? null,
+      latencyMs: result?.latencyMs ?? null,
+    });
+  }),
+
+  healthCheck: asyncHandler(async (req, res) => {
+    const body = req.body || {};
+    const providerConfig = parseConfigPayload(body);
+    const successRule = getSuccessRule(providerConfig);
+
+    const issues = [];
+    if (!(providerConfig.sendUrl || providerConfig.send_url || providerConfig.url)) {
+      issues.push('sendUrl is missing');
+    }
+    if (!(providerConfig.verifyUrl || providerConfig.verify_url)) {
+      issues.push('verifyUrl is missing');
+    }
+    if (!successRule.key || successRule.value === '') {
+      issues.push(
+        'successKey / successValue should be set (e.g. responseCode = 0)',
+      );
+    }
+
+    res.json({
+      ok: issues.length === 0,
+      provider: 'partner',
+      successRule,
+      error: issues.length ? issues.join('; ') : null,
+      message:
+        issues.length === 0
+          ? `Config looks valid. Success when ${successRule.key}=${successRule.value}`
+          : null,
+    });
+  }),
+};

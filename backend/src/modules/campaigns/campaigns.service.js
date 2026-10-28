@@ -1,0 +1,1046 @@
+import { getRepository } from '../../database/index.js';
+import { Campaign } from '../../database/entities/campaign.entity.js';
+import {
+  ALL_CAMPAIGN_PAGE_TYPES,
+  CampaignPage,
+  CampaignPageType,
+  REQUIRED_CAMPAIGN_PAGE_TYPES,
+} from '../../database/entities/campaign-page.entity.js';
+import { Template } from '../../database/entities/template.entity.js';
+import { ApiConfig } from '../../database/entities/api-config.entity.js';
+import { CampaignTracking } from '../../database/entities/campaign-tracking.entity.js';
+import {
+  getDefaultFunnelPageData,
+  isClassicDefaultFunnelHtml,
+} from '../../database/seed/default-funnel-pages.js';
+import { flowEngineService } from '../flow/flow-engine.service.js';
+import { marketsService } from '../markets/markets.service.js';
+import {
+  buildTrackingId,
+  deriveCountryCode,
+  deriveOperatorCode,
+} from '../markets/helpers/tracking-id.util.js';
+import { redisService } from '../../common/services/redis.service.js';
+import { parsePayoutPercent } from '../otp/helpers/payout.js';
+
+export const createCampaignsService = () => {
+  const getCampaignRepo = () => getRepository(Campaign);
+  const getCampaignPageRepo = () => getRepository(CampaignPage);
+  const getTemplateRepo = () => getRepository(Template);
+  const getApiConfigRepo = () => getRepository(ApiConfig);
+  const getTrackingRepo = () => getRepository(CampaignTracking);
+
+  const normalize = (value) => value.trim();
+
+  const withTrackingId = (campaign) => {
+    const cc = campaign.marketOperator?.country?.code;
+    const oc = campaign.marketOperator?.code;
+    if (cc && oc) {
+      campaign.trackingId = buildTrackingId(cc, oc, campaign.id);
+    }
+    return campaign;
+  };
+
+  const pageHasContent = (page) => {
+    const html = page.template?.data?.html;
+    return typeof html === 'string' && html.trim().length > 0;
+  };
+
+  const sanitizeCampaignListItem = (campaign) => {
+    if (campaign.pages) {
+      campaign.pages = campaign.pages.map((page) => {
+        if (page.template?.data) {
+          page.template.data = {
+            ...page.template.data,
+            projectData: undefined,
+            html: page.template.data.html ? '[saved]' : '',
+            css: page.template.data.css ? '[saved]' : '',
+          };
+        }
+        return page;
+      });
+    }
+    return campaign;
+  };
+
+  /** Persist campaign columns only — never cascade to trackings/pages. */
+  const persistCampaign = async (campaign) => {
+    const trackings = campaign.trackings;
+    const pages = campaign.pages;
+    const marketOperator = campaign.marketOperator;
+    const user = campaign.user;
+    delete campaign.trackings;
+    delete campaign.pages;
+    delete campaign.marketOperator;
+    delete campaign.user;
+    try {
+      return await getCampaignRepo().save(campaign);
+    } finally {
+      campaign.trackings = trackings;
+      campaign.pages = pages;
+      campaign.marketOperator = marketOperator;
+      campaign.user = user;
+    }
+  };
+
+  const invalidateFlowCampaignCache = async (campaignOrPartial) => {
+    if (!campaignOrPartial) return;
+
+    let campaign = campaignOrPartial;
+    const isIdOnly =
+      typeof campaignOrPartial === 'number' ||
+      typeof campaignOrPartial === 'string';
+
+    const id = isIdOnly
+      ? parseInt(campaignOrPartial, 10)
+      : campaign?.id
+        ? parseInt(campaign.id, 10)
+        : null;
+
+    if (!id || Number.isNaN(id)) return;
+
+    if (isIdOnly || !campaign?.country || !campaign?.operator || !campaign?.trackingId) {
+      try {
+        const found = await getCampaignRepo().findOne({
+          where: { id },
+          relations: {
+            marketOperator: { country: true },
+          },
+        });
+        if (found) {
+          campaign = found;
+          withTrackingId(campaign);
+        }
+      } catch (err) {
+        console.warn('Failed to load campaign for cache invalidation:', err?.message || err);
+      }
+    } else if (campaign?.id && !campaign.trackingId) {
+      withTrackingId(campaign);
+    }
+
+    const cc1 = campaign?.country ? String(campaign.country).toLowerCase() : '';
+    const oc1 = campaign?.operator ? String(campaign.operator).toLowerCase() : '';
+    const cc2 = campaign?.marketOperator?.country?.name
+      ? String(campaign.marketOperator.country.name).toLowerCase()
+      : '';
+    const oc2 = campaign?.marketOperator?.name
+      ? String(campaign.marketOperator.name).toLowerCase()
+      : '';
+    const cc3 = campaign?.marketOperator?.country?.code
+      ? String(campaign.marketOperator.country.code).toLowerCase()
+      : '';
+    const oc3 = campaign?.marketOperator?.code
+      ? String(campaign.marketOperator.code).toLowerCase()
+      : '';
+
+    const keys = [
+      `flow:campaign:id:${id}`,
+      `flow:config:${id}`,
+      campaign?.trackingId ? `flow:campaign:id:${campaign.trackingId}` : null,
+      cc1 && oc1 ? `flow:campaign:co:${cc1}:${oc1}` : null,
+      cc2 && oc2 ? `flow:campaign:co:${cc2}:${oc2}` : null,
+      cc3 && oc3 ? `flow:campaign:co:${cc3}:${oc3}` : null,
+      cc1 && oc3 ? `flow:campaign:co:${cc1}:${oc3}` : null,
+      cc3 && oc1 ? `flow:campaign:co:${cc3}:${oc1}` : null,
+    ].filter(Boolean);
+
+    const uniqueKeys = Array.from(new Set(keys));
+
+    try {
+      await Promise.all(uniqueKeys.map((k) => redisService.del(k)));
+      if (typeof redisService.deletePattern === 'function') {
+        await Promise.all([
+          redisService.deletePattern(`flow:campaign:id:${id}*`).catch(() => {}),
+          campaign?.trackingId
+            ? redisService.deletePattern(`flow:campaign:id:${campaign.trackingId}*`).catch(() => {})
+            : Promise.resolve(),
+        ]);
+      }
+    } catch (err) {
+      console.warn('invalidateFlowCampaignCache error:', err?.message || err);
+    }
+  };
+
+  const defaultPageData = (pageType, campaign) =>
+    getDefaultFunnelPageData(pageType, {
+      verificationMode: campaign?.verificationMode,
+    });
+
+  const isDefaultTemplateHtml = (pageType, html) => {
+    const source = String(html || '').trim();
+    if (!source) return true;
+    if (isClassicDefaultFunnelHtml(pageType, source)) return true;
+    if (source.includes('bf-wellness-container') || source.includes('WELLNESS360')) return true;
+    if (source.includes('dcb-home') || source.includes('dcb-otp') || source.includes('data-dcb-action')) return true;
+    if (
+      source.includes('he-page') ||
+      source.includes('otp-flow-page') ||
+      source.includes('both-flow-page') ||
+      source.includes('cg-flow-page') ||
+      source.includes('none-flow-page')
+    ) return true;
+    if (source.includes('Premium Mobile Service') || source.includes('Verify Mobile Number') || source.includes("You're Subscribed!")) return true;
+    return false;
+  };
+
+
+  const ensureOrangeBfFlowGraph = async (campaign) => {
+    const mode = flowEngineService.normalizeMode(campaign.verificationMode);
+    if (mode !== 'ORANGE_BF') return false;
+    const parsedFlow = flowEngineService.parseFlowConfig(campaign.flowConfig);
+    if (
+      parsedFlow &&
+      parsedFlow.nodes?.some((n) => n.pageType === CampaignPageType.CONFIRM) &&
+      parsedFlow.edges?.some(
+        (e) => e.source === 'HOME' && e.target === 'CONFIRM',
+      )
+    ) {
+      return false;
+    }
+    campaign.flowConfig = JSON.stringify(
+      flowEngineService.getDefaultFlowConfig('ORANGE_BF'),
+    );
+    await getCampaignRepo().update(
+      { id: campaign.id },
+      { flowConfig: campaign.flowConfig },
+    );
+    return true;
+  };
+
+  const ensureFlowPages = async (campaign) => {
+    let changed = await ensureOrangeBfFlowGraph(campaign);
+
+    for (const page of campaign.pages || []) {
+      if (!page.templateId) continue;
+
+      const template =
+        page.template ||
+        (await getTemplateRepo().findOne({
+          where: { id: page.templateId },
+        }));
+      if (!template) continue;
+
+      const html = template.data?.html || '';
+      const isDefault = isDefaultTemplateHtml(page.pageType, html);
+
+      if (isDefault) {
+        const newData = defaultPageData(page.pageType, campaign);
+        if (newData && newData.html && template.data?.html !== newData.html) {
+          template.data = newData;
+          await getTemplateRepo().save(template);
+          page.template = template;
+          changed = true;
+        }
+      }
+    }
+
+    if (changed) await invalidateFlowCampaignCache(campaign);
+    return changed;
+  };
+
+  const ensureCampaignPages = async (campaign) => {
+    const existingPageTypes = new Set(
+      (campaign.pages || []).map((p) => p.pageType),
+    );
+
+    // Fast return if all pages already exist
+    if (existingPageTypes.size >= ALL_CAMPAIGN_PAGE_TYPES.length) {
+      return;
+    }
+
+    let inserted = false;
+    for (const pageType of ALL_CAMPAIGN_PAGE_TYPES) {
+      if (!existingPageTypes.has(pageType)) {
+        try {
+          const template = await getTemplateRepo().save(
+            getTemplateRepo().create({
+              name: `${campaign.name} - ${pageType}`,
+              data: defaultPageData(pageType, campaign),
+              userId: campaign.userId,
+              isPrebuilt: false,
+            }),
+          );
+
+          const newPage = await getCampaignPageRepo().save(
+            getCampaignPageRepo().create({
+              campaignId: campaign.id,
+              pageType,
+              templateId: template.id,
+            }),
+          );
+
+          newPage.template = template;
+          if (!campaign.pages) {
+            campaign.pages = [];
+          }
+          campaign.pages.push(newPage);
+          inserted = true;
+        } catch (err) {
+          const dbPage = await getCampaignPageRepo().findOne({
+            where: { campaignId: campaign.id, pageType },
+            relations: { template: true },
+          });
+          if (dbPage) {
+            if (!campaign.pages) {
+              campaign.pages = [];
+            }
+            campaign.pages.push(dbPage);
+          }
+        }
+      }
+    }
+
+    if (inserted) {
+      await ensureFlowPages(campaign);
+    }
+  };
+
+  const findAll = async (userId) => {
+    const campaigns = await getCampaignRepo().find({
+      where: { userId },
+      relations: {
+        pages: { template: true },
+        trackings: { vendor: true },
+        marketOperator: { country: true },
+      },
+      order: { updatedAt: 'DESC' },
+    });
+    return campaigns.map((c) => sanitizeCampaignListItem(withTrackingId(c)));
+  };
+
+  const assertOwnership = async (id, userId) => {
+    const campaign = await getCampaignRepo().findOne({
+      where: { id: parseInt(id, 10) },
+      select: { id: true, name: true, userId: true },
+    });
+    if (!campaign) {
+      const err = new Error(`Campaign with ID ${id} not found`);
+      err.statusCode = 404;
+      throw err;
+    }
+    if (campaign.userId !== userId) {
+      const err = new Error(
+        'You do not have permission to access this campaign',
+      );
+      err.statusCode = 403;
+      throw err;
+    }
+    return campaign;
+  };
+
+  const findOne = async (id, userId) => {
+    const campaign = await getCampaignRepo().findOne({
+      where: { id: parseInt(id, 10) },
+      relations: {
+        pages: { template: true },
+        trackings: { vendor: true },
+        marketOperator: { country: true },
+      },
+    });
+    if (!campaign) {
+      const err = new Error(`Campaign with ID ${id} not found`);
+      err.statusCode = 404;
+      throw err;
+    }
+    if (campaign.userId !== userId) {
+      const err = new Error(
+        'You do not have permission to access this campaign',
+      );
+      err.statusCode = 403;
+      throw err;
+    }
+    await ensureCampaignPages(campaign);
+    return sanitizeCampaignListItem(withTrackingId(campaign));
+  };
+
+  const findByCountryOperator = async (country, operator) => {
+    const normalizedCountry = normalize(country);
+    const normalizedOperator = normalize(operator);
+
+    const campaigns = await getCampaignRepo()
+      .createQueryBuilder('campaign')
+      .leftJoinAndSelect('campaign.pages', 'pages')
+      .leftJoinAndSelect('pages.template', 'template')
+      .leftJoinAndSelect('campaign.trackings', 'trackings')
+      .leftJoinAndSelect('trackings.vendor', 'vendor')
+      .leftJoinAndSelect('campaign.marketOperator', 'marketOperator')
+      .leftJoinAndSelect('marketOperator.country', 'marketCountry')
+      .where('LOWER(campaign.country) = LOWER(:country)', {
+        country: normalizedCountry,
+      })
+      .andWhere('LOWER(campaign.operator) = LOWER(:operator)', {
+        operator: normalizedOperator,
+      })
+      .getMany();
+
+    if (campaigns.length === 0) return null;
+
+    let campaign = null;
+    if (campaigns.length === 1) {
+      campaign = campaigns[0];
+    } else {
+      const actives = campaigns.filter((c) => c.active);
+      if (actives.length === 1) {
+        campaign = actives[0];
+      } else if (actives.length > 1) {
+        // Multiple active campaigns in same market — prefer most recently updated.
+        // Callers with campid still resolve uniquely via findByTrackingId.
+        campaign = [...actives].sort(
+          (a, b) =>
+            new Date(b.updatedAt || 0).getTime() -
+            new Date(a.updatedAt || 0).getTime(),
+        )[0];
+      } else {
+        campaign = [...campaigns].sort(
+          (a, b) =>
+            new Date(b.updatedAt || 0).getTime() -
+            new Date(a.updatedAt || 0).getTime(),
+        )[0];
+      }
+    }
+
+    if (campaign) {
+      await ensureCampaignPages(campaign);
+      return withTrackingId(campaign);
+    }
+    return null;
+  };
+
+  const findByIdForFlow = async (id) => {
+    if (!id || Number.isNaN(Number(id))) return null;
+    const campaign = await getCampaignRepo().findOne({
+      where: { id: parseInt(id, 10) },
+      relations: {
+        pages: { template: true },
+        trackings: { vendor: true },
+        marketOperator: { country: true },
+      },
+    });
+    if (campaign) {
+      await ensureCampaignPages(campaign);
+      if (await ensureOrangeBfFlowGraph(campaign)) {
+        await invalidateFlowCampaignCache(campaign);
+      }
+      return withTrackingId(campaign);
+    }
+    return null;
+  };
+
+  const findByTrackingId = async (countryCode, operatorCode, campaignId) => {
+    const campaign = await findByIdForFlow(campaignId);
+    if (!campaign) return null;
+    const cc = campaign.marketOperator?.country?.code?.toUpperCase();
+    const oc = campaign.marketOperator?.code?.toUpperCase();
+    if (cc && oc) {
+      if (
+        cc !== countryCode.toUpperCase() ||
+        oc !== operatorCode.toUpperCase()
+      ) {
+        return null;
+      }
+    }
+    return campaign;
+  };
+
+  const create = async (dto, userId) => {
+    const { country, operator } = await marketsService.resolveOperatorForCreate(
+      {
+        userId,
+        operatorId: dto.operatorId,
+        countryCode:
+          dto.countryCode ||
+          (dto.country ? deriveCountryCode(dto.country) : undefined),
+        operatorCode:
+          dto.operatorCode ||
+          (dto.operator ? deriveOperatorCode(dto.operator) : undefined),
+        countryName: dto.country,
+        operatorName: dto.operator,
+      },
+    );
+
+    const countryName = normalize(dto.country || country.name);
+    const operatorName = normalize(dto.operator || operator.name);
+
+    const nameConflict = await getCampaignRepo().findOne({
+      where: { operatorId: operator.id, name: dto.name.trim() },
+    });
+    if (nameConflict) {
+      const err = new Error(
+        `Campaign "${dto.name.trim()}" already exists for ${country.code} / ${operator.code}`,
+      );
+      err.statusCode = 409;
+      throw err;
+    }
+
+    let sourcePages = [];
+    if (dto.copyFromCampaignId) {
+      const source = await getCampaignRepo().findOne({
+        where: { id: parseInt(dto.copyFromCampaignId, 10), userId },
+        relations: { pages: { template: true } },
+      });
+      if (!source) {
+        const err = new Error(
+          `Source campaign ${dto.copyFromCampaignId} not found`,
+        );
+        err.statusCode = 404;
+        throw err;
+      }
+      sourcePages = source.pages || [];
+    }
+
+    const defaultMode = 'BOTH';
+    const campaign = await getCampaignRepo().save(
+      getCampaignRepo().create({
+        name: dto.name.trim(),
+        country: countryName,
+        operator: operatorName,
+        operatorId: operator.id,
+        serviceId: dto.serviceId,
+        userId,
+        active: false,
+        verificationMode: defaultMode,
+        flowConfig: JSON.stringify(
+          flowEngineService.getDefaultFlowConfig(defaultMode),
+        ),
+      }),
+    );
+
+    for (const pageType of ALL_CAMPAIGN_PAGE_TYPES) {
+      const sourcePage = sourcePages.find((p) => p.pageType === pageType);
+      let template;
+
+      if (sourcePage?.template) {
+        template = await getTemplateRepo().save(
+          getTemplateRepo().create({
+            name: `${campaign.name} - ${pageType}`,
+            data: { ...sourcePage.template.data },
+            userId,
+            isPrebuilt: false,
+          }),
+        );
+      } else {
+        template = await getTemplateRepo().save(
+          getTemplateRepo().create({
+            name: `${campaign.name} - ${pageType}`,
+            data: defaultPageData(pageType, campaign),
+            userId,
+            isPrebuilt: false,
+          }),
+        );
+      }
+
+      await getCampaignPageRepo().save(
+        getCampaignPageRepo().create({
+          campaignId: campaign.id,
+          pageType,
+          templateId: template.id,
+        }),
+      );
+    }
+
+    return sanitizeCampaignListItem(await findOne(campaign.id, userId));
+  };
+
+  const update = async (id, dto, userId) => {
+    const campaign = await findOne(id, userId);
+
+    if (dto.active === true) {
+      const flowConfig = flowEngineService.parseFlowConfig(campaign.flowConfig);
+      const requiredTypes =
+        flowConfig && flowConfig.nodes
+          ? flowConfig.nodes.map((n) => n.pageType)
+          : REQUIRED_CAMPAIGN_PAGE_TYPES;
+
+      const missing = requiredTypes.filter((type) => {
+        const page = campaign.pages.find((p) => p.pageType === type);
+        return !page || !pageHasContent(page);
+      });
+      if (missing.length > 0) {
+        const err = new Error(
+          `Cannot activate campaign. Missing content for: ${missing.join(', ')}`,
+        );
+        err.statusCode = 400;
+        throw err;
+      }
+    }
+
+    if (dto.name !== undefined) campaign.name = dto.name.trim();
+    if (dto.serviceId !== undefined) campaign.serviceId = dto.serviceId;
+    if (dto.cgRedirectUrl !== undefined) {
+      campaign.cgRedirectUrl = dto.cgRedirectUrl?.trim() || null;
+    }
+    if (dto.successRedirectUrl !== undefined) {
+      campaign.successRedirectUrl = dto.successRedirectUrl?.trim() || null;
+    }
+    if (dto.successRedirectMode !== undefined) {
+      const mode = String(dto.successRedirectMode || '')
+        .trim()
+        .toLowerCase();
+      campaign.successRedirectMode =
+        mode === 'immediate' ? 'immediate' : 'thankyou';
+    }
+    if (dto.postbackRegisterAt !== undefined) {
+      const mode = String(dto.postbackRegisterAt || '')
+        .trim()
+        .toLowerCase();
+      campaign.postbackRegisterAt =
+        mode === 'otp' || mode === 'both' ? mode : 'confirm';
+    }
+    if (dto.funnelLayout !== undefined) {
+      const layout = String(dto.funnelLayout || '')
+        .trim()
+        .toLowerCase();
+      const nextLayout =
+        layout === 'packs_on_home' ? 'packs_on_home' : 'classic';
+      campaign.funnelLayout = nextLayout;
+      // Default: pack-click pending only. Classic "otp only" would skip pack CTAs
+      // as the primary register — reset so Advanced can opt back into OTP.
+      if (
+        nextLayout === 'packs_on_home' &&
+        campaign.postbackRegisterAt === 'otp'
+      ) {
+        campaign.postbackRegisterAt = 'confirm';
+      }
+      const parsed = flowEngineService.parseFlowConfig(campaign.flowConfig);
+      if (parsed) {
+        campaign.flowConfig = JSON.stringify(
+          flowEngineService.applyFunnelLayoutToFlowConfig(
+            parsed,
+            nextLayout,
+            campaign.verificationMode,
+          ),
+        );
+      }
+    }
+    if (dto.active !== undefined) campaign.active = dto.active;
+    if (dto.allowedCallbackStatuses !== undefined) {
+      campaign.allowedCallbackStatuses =
+        typeof dto.allowedCallbackStatuses === 'string'
+          ? dto.allowedCallbackStatuses.trim() || null
+          : null;
+    }
+    if (dto.cappingEnabled !== undefined) {
+      campaign.cappingEnabled = Boolean(dto.cappingEnabled);
+    }
+    if (dto.cappingMetric !== undefined) {
+      const metric = String(dto.cappingMetric || '').trim().toLowerCase();
+      campaign.cappingMetric = metric === 'clicks' ? 'clicks' : 'conversions';
+    }
+    if (dto.cappingLimit !== undefined) {
+      campaign.cappingLimit =
+        dto.cappingLimit !== null && dto.cappingLimit !== ''
+          ? parseInt(dto.cappingLimit, 10)
+          : null;
+    }
+    if (dto.cappingAction !== undefined) {
+      const action = String(dto.cappingAction || '').trim().toLowerCase();
+      campaign.cappingAction = action === 'fallback' ? 'fallback' : 'stop';
+    }
+    if (dto.fallbackCampaignId !== undefined) {
+      campaign.fallbackCampaignId =
+        dto.fallbackCampaignId !== null && dto.fallbackCampaignId !== ''
+          ? parseInt(dto.fallbackCampaignId, 10)
+          : null;
+    }
+    if (dto.cappingInterval !== undefined) {
+      const interval = String(dto.cappingInterval || '').trim().toLowerCase();
+      campaign.cappingInterval = interval === 'total' ? 'total' : 'daily';
+    }
+    if (dto.trackings !== undefined) {
+      await getTrackingRepo().delete({ campaignId: campaign.id });
+      if (dto.trackings && dto.trackings.length > 0) {
+        await getTrackingRepo().insert(
+          dto.trackings.map((t) => ({
+            campaignId: campaign.id,
+            vendorId: Number(t.vendorId),
+            affiliateId: null,
+            active:
+              t.active === undefined || t.active === null ? true : !!t.active,
+            payoutPercent: parsePayoutPercent(t.payoutPercent),
+            allowedCallbackStatuses:
+              typeof t.allowedCallbackStatuses === 'string'
+                ? t.allowedCallbackStatuses.trim() || null
+                : null,
+          })),
+        );
+      }
+    } else if (dto.vendorIds !== undefined) {
+      await getTrackingRepo().delete({ campaignId: campaign.id });
+      if (dto.vendorIds && dto.vendorIds.length > 0) {
+        await getTrackingRepo().insert(
+          dto.vendorIds.map((vid) => ({
+            campaignId: campaign.id,
+            vendorId: Number(vid),
+            affiliateId: null,
+            active: true,
+          })),
+        );
+      }
+    }
+
+    delete campaign.trackings;
+    await persistCampaign(campaign);
+    const refreshed = sanitizeCampaignListItem(await findOne(id, userId));
+    await invalidateFlowCampaignCache(refreshed);
+    return refreshed;
+  };
+
+  const getFlow = async (id, userId) => {
+    const campaign = await findOne(id, userId);
+    const mode =
+      flowEngineService.normalizeMode(campaign.verificationMode) || 'BOTH';
+    const flowConfig =
+      flowEngineService.parseFlowConfig(campaign.flowConfig) ||
+      flowEngineService.getDefaultFlowConfig(mode, {
+        funnelLayout: campaign.funnelLayout,
+      });
+    return { verificationMode: mode, flowConfig };
+  };
+
+  const updateFlow = async (id, dto, userId) => {
+    const campaign = await findOne(id, userId);
+
+    const mode =
+      flowEngineService.normalizeMode(dto.verificationMode) ||
+      flowEngineService.normalizeMode(campaign.verificationMode) ||
+      'BOTH';
+
+    let flowConfig;
+    if (dto.flowConfig) {
+      flowConfig = flowEngineService.stripUnreachableNodes(
+        dto.flowConfig,
+        mode,
+      );
+      const { ok, errors } = flowEngineService.validate(flowConfig, mode);
+      if (!ok) {
+        const err = new Error(`Invalid flow: ${errors.join(' ')}`);
+        err.statusCode = 400;
+        throw err;
+      }
+    } else {
+      flowConfig =
+        flowEngineService.parseFlowConfig(campaign.flowConfig) ||
+        flowEngineService.getDefaultFlowConfig(mode, {
+          funnelLayout: campaign.funnelLayout,
+        });
+    }
+
+    campaign.verificationMode = mode;
+    // Honor flowConfig.entryPage (e.g. OTP-first). Do not force HOME.
+    flowConfig.entryPage = flowEngineService.getEntryPage(flowConfig);
+    campaign.flowConfig = JSON.stringify(flowConfig);
+    await persistCampaign(campaign);
+    await ensureFlowPages(campaign);
+    await invalidateFlowCampaignCache(campaign);
+    return { verificationMode: mode, flowConfig };
+  };
+
+  const remove = async (id, userId) => {
+    const campaign = await findOne(id, userId);
+    campaign.active = false;
+    await persistCampaign(campaign);
+    await invalidateFlowCampaignCache(campaign);
+  };
+
+  const applyDefaultTemplates = async (id, userId, onlyEmpty = true) => {
+    const campaign = await getCampaignRepo().findOne({
+      where: { id: parseInt(id, 10) },
+      relations: {
+        pages: { template: true },
+        trackings: { vendor: true },
+        marketOperator: { country: true },
+      },
+    });
+    if (!campaign) {
+      const err = new Error(`Campaign with ID ${id} not found`);
+      err.statusCode = 404;
+      throw err;
+    }
+    if (campaign.userId !== userId) {
+      const err = new Error(
+        'You do not have permission to access this campaign',
+      );
+      err.statusCode = 403;
+      throw err;
+    }
+
+    await ensureCampaignPages(campaign);
+
+    for (const page of campaign.pages || []) {
+      const hasContent = pageHasContent(page);
+      if (onlyEmpty && hasContent) continue;
+      if (!page.templateId) continue;
+
+      const template =
+        page.template ||
+        (await getTemplateRepo().findOne({
+          where: { id: page.templateId },
+        }));
+      if (!template) continue;
+
+      template.data = defaultPageData(page.pageType, campaign);
+      await getTemplateRepo().save(template);
+      page.template = template;
+    }
+
+    await invalidateFlowCampaignCache(campaign);
+    return findOne(id, userId);
+  };
+
+  const getPage = async (campaignId, pageType, userId) => {
+    // Use unsanitized campaign so editor gets real html/css/projectData
+    // (findOne strips content to "[saved]" for list payloads).
+    const campaign = await getCampaignRepo().findOne({
+      where: { id: parseInt(campaignId, 10) },
+      relations: {
+        pages: { template: true },
+        marketOperator: { country: true },
+      },
+    });
+    if (!campaign) {
+      const err = new Error(`Campaign with ID ${campaignId} not found`);
+      err.statusCode = 404;
+      throw err;
+    }
+    if (campaign.userId !== userId) {
+      const err = new Error(
+        'You do not have permission to access this campaign',
+      );
+      err.statusCode = 403;
+      throw err;
+    }
+
+    await ensureCampaignPages(campaign);
+
+    const normalizedType = String(pageType || '')
+      .trim()
+      .toUpperCase();
+    if (!ALL_CAMPAIGN_PAGE_TYPES.includes(normalizedType)) {
+      const err = new Error(`Invalid page type "${pageType}"`);
+      err.statusCode = 400;
+      throw err;
+    }
+
+    const page = (campaign.pages || []).find(
+      (p) => p.pageType === normalizedType,
+    );
+    if (!page) {
+      const err = new Error(`Page type ${pageType} not found for campaign`);
+      err.statusCode = 404;
+      throw err;
+    }
+
+    // Only reload template if relation was somehow missing
+    if (!page.template && page.templateId) {
+      const template = await getTemplateRepo().findOne({
+        where: { id: page.templateId },
+      });
+      if (template) page.template = template;
+    }
+
+    return page;
+  };
+
+  const updatePageContent = async (campaignId, pageType, dto, userId) => {
+    const normalizedType = String(pageType || '')
+      .trim()
+      .toUpperCase();
+    if (!ALL_CAMPAIGN_PAGE_TYPES.includes(normalizedType)) {
+      const err = new Error(`Invalid page type "${pageType}"`);
+      err.statusCode = 400;
+      throw err;
+    }
+    const page = await getPage(campaignId, normalizedType, userId);
+    if (!page.templateId) {
+      const err = new Error('Template not linked to this page');
+      err.statusCode = 404;
+      throw err;
+    }
+
+    const template =
+      page.template ||
+      (await getTemplateRepo().findOne({
+        where: { id: page.templateId },
+      }));
+    if (!template) {
+      const err = new Error('Template not found');
+      err.statusCode = 404;
+      throw err;
+    }
+
+    const data = { ...(template.data || {}) };
+    if (dto.projectData !== undefined) data.projectData = dto.projectData;
+    if (dto.html !== undefined) data.html = dto.html;
+    if (dto.css !== undefined) data.css = dto.css;
+    data.editor = 'grapesjs';
+
+    template.data = data;
+    await getTemplateRepo().save(template);
+
+    page.template = template;
+    page.updatedAt = new Date();
+    await getCampaignPageRepo().save(page);
+
+    // Fast synchronous cache invalidation so preview and live updates instantly
+    await invalidateFlowCampaignCache(campaignId);
+
+    return page;
+  };
+
+  const getApiConfig = async (campaignId, userId) => {
+    const campaign = await findOne(campaignId, userId);
+    let config = await getApiConfigRepo().findOne({
+      where: { campaignId: parseInt(campaignId, 10) },
+    });
+    const mode = flowEngineService.normalizeMode(campaign?.verificationMode);
+    if (!config && mode === 'ORANGE_BF') {
+      const orangeDefault = {
+        baseUrl: 'http://103.153.58.55',
+        serviceId: 'Health Portal Livliness',
+        subServiceId: 'Health Portal Livliness pass jour',
+        cpId: '100',
+        channel: 'ussd',
+        country: 'BF',
+        operator: 'ORG',
+        language: '_E',
+        successKey: 'responseCode',
+        successValue: '0',
+      };
+      return {
+        campaignId: parseInt(campaignId, 10),
+        subscriptionApi: 'http://103.153.58.55/subapi/checksub?msisdn={{msisdn}}&serviceId=Health Portal Livliness',
+        subscribeApi: null,
+        blocklistApi: null,
+        headersJson: JSON.stringify(orangeDefault),
+        otpConfigJson: JSON.stringify({
+          sendUrl: 'http://103.153.58.55/subapi/auth/otp/generate?msisdn={{msisdn}}&language=_E',
+          verifyUrl: 'http://103.153.58.55/subapi/auth/otp/validate?msisdn={{msisdn}}&otp={{otp}}',
+          method: 'GET',
+          verifyMethod: 'GET',
+          successKey: 'responseCode',
+          successValue: '0',
+          payoutPercent: 100,
+        }),
+      };
+    }
+    return config;
+  };
+
+  const upsertApiConfig = async (campaignId, payload, userId) => {
+    await findOne(campaignId, userId);
+
+    const allowed = {
+      blocklistApi: payload.blocklistApi,
+      subscriptionApi: payload.subscriptionApi,
+      subscribeApi: payload.subscribeApi,
+      headersJson: payload.headersJson,
+      otpConfigJson: payload.otpConfigJson,
+      resolveMsisdnUrl: payload.resolveMsisdnUrl,
+      heProvider: payload.heProvider,
+      heConfigJson: payload.heConfigJson,
+      checksubConfigJson: payload.checksubConfigJson,
+      dcbConfigJson: payload.dcbConfigJson,
+    };
+    // Strip undefined so we don't wipe fields the client omitted
+    Object.keys(allowed).forEach((k) => {
+      if (allowed[k] === undefined) delete allowed[k];
+    });
+    // Empty string → null (clear subscribe URL)
+    if (Object.prototype.hasOwnProperty.call(allowed, 'subscribeApi')) {
+      const raw = allowed.subscribeApi;
+      allowed.subscribeApi =
+        raw == null || String(raw).trim() === '' ? null : String(raw).trim();
+    }
+    if (Object.prototype.hasOwnProperty.call(allowed, 'checksubConfigJson')) {
+      const raw = allowed.checksubConfigJson;
+      allowed.checksubConfigJson =
+        raw == null || String(raw).trim() === '' ? null : String(raw).trim();
+    }
+    if (Object.prototype.hasOwnProperty.call(allowed, 'dcbConfigJson')) {
+      const raw = allowed.dcbConfigJson;
+      allowed.dcbConfigJson =
+        raw == null || String(raw).trim() === '' ? null : String(raw).trim();
+    }
+
+    let config = await getApiConfigRepo().findOne({
+      where: { campaignId: parseInt(campaignId, 10) },
+    });
+    if (!config) {
+      config = getApiConfigRepo().create({
+        campaignId: parseInt(campaignId, 10),
+        ...allowed,
+      });
+    } else {
+      Object.assign(config, allowed);
+    }
+    const saved = await getApiConfigRepo().save(config);
+    await invalidateFlowCampaignCache(campaignId);
+    return saved;
+  };
+
+  const serializeCampaign = (campaign, extras = {}) => {
+    if (!campaign) return null;
+    const flowConfig =
+      extras.flowConfig !== undefined ? extras.flowConfig : campaign.flowConfig;
+    return {
+      id: campaign.id,
+      name: campaign.name,
+      country: campaign.country,
+      operator: campaign.operator,
+      operatorId: campaign.operatorId,
+      serviceId: campaign.serviceId,
+      active: campaign.active,
+      userId: campaign.userId,
+      verificationMode: extras.verificationMode ?? campaign.verificationMode,
+      flowConfig:
+        flowConfig && typeof flowConfig !== 'string'
+          ? JSON.stringify(flowConfig)
+          : flowConfig,
+      cgRedirectUrl: campaign.cgRedirectUrl,
+      successRedirectUrl: campaign.successRedirectUrl,
+      successRedirectMode: campaign.successRedirectMode,
+      postbackRegisterAt: campaign.postbackRegisterAt,
+      funnelLayout: campaign.funnelLayout,
+      allowedCallbackStatuses: campaign.allowedCallbackStatuses || null,
+      cappingEnabled: Boolean(campaign.cappingEnabled),
+      cappingMetric: campaign.cappingMetric || 'conversions',
+      cappingLimit: campaign.cappingLimit != null ? Number(campaign.cappingLimit) : null,
+      cappingAction: campaign.cappingAction || 'stop',
+      fallbackCampaignId: campaign.fallbackCampaignId != null ? Number(campaign.fallbackCampaignId) : null,
+      cappingInterval: campaign.cappingInterval || 'daily',
+      createdAt: campaign.createdAt,
+      updatedAt: campaign.updatedAt,
+      pages: campaign.pages || [],
+      trackings: campaign.trackings || [],
+      marketOperator: campaign.marketOperator || null,
+      trackingId: campaign.trackingId,
+    };
+  };
+
+  return {
+    findAll,
+    findOne,
+    assertOwnership,
+    findByCountryOperator,
+    findByIdForFlow,
+    findByTrackingId,
+    ensureCampaignPages,
+    create,
+    update,
+    getFlow,
+    updateFlow,
+    remove,
+    applyDefaultTemplates,
+    getPage,
+    updatePageContent,
+    getApiConfig,
+    upsertApiConfig,
+    serializeCampaign,
+    pageHasContent,
+    sanitizeCampaignListItem,
+    withTrackingId,
+    invalidateFlowCampaignCache,
+  };
+};
+
+export const campaignsService = createCampaignsService();

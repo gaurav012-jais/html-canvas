@@ -1,0 +1,130 @@
+import { healLiveHotspots } from '../../editor/utils/overlayStacking'
+import { healLiveFlowButtons } from '../../editor/utils/textSizeAlign'
+import {
+  FLOW_RUNTIME_CSS,
+  flowRuntimeStylesheetLinks,
+} from '../../editor/services/flowRuntimeCss'
+import { sanitizeSavedPageHtml } from '../../editor/services/wysiwygContract'
+import { pickLivePageData, isMobileViewport } from '../../editor/services/deviceLayouts'
+import { normalizePack } from './flowHelpers'
+
+/**
+ * Mount a saved campaign page into the live funnel shadow root.
+ * Uses the same FLOW_RUNTIME_CSS + font/icon links as the GrapesJS canvas
+ * (minus editor-only chrome) so Save → Preview matches the builder.
+ */
+function mountPageInShadow(shadow, pageData, options = {}) {
+  const mobile =
+    options.mobile != null ? options.mobile : isMobileViewport()
+  pageData = pickLivePageData(pageData, mobile) || pageData
+  const { customHeight } = pageData.projectData || {}
+
+  // Live always fills the screen. customWidth is an editor frame only —
+  // capping preview at that px left gray gutters on desktop.
+  let inlineStyles = `width: 100% !important; max-width: 100% !important; `
+  if (customHeight) {
+    inlineStyles += `position: relative; `
+  }
+
+  // Transform <body> tag to <div> to avoid invalid nested <body> inside Shadow DOM,
+  // which browser parsers often collapse or strip.
+  let cleanedHtml = pageData.html || ''
+  if (cleanedHtml.trim().toLowerCase().startsWith('<body')) {
+    cleanedHtml = cleanedHtml.replace(/^<body/i, '<div').replace(/<\/body>$/i, '</div>')
+  }
+  // WYSIWYG: strip accidental absolute CTAs from older saves before paint
+  cleanedHtml = sanitizeSavedPageHtml(cleanedHtml)
+
+  const cleanCss = (pageData.css || '').replace(/#wrapper\s*/gi, '')
+
+  shadow.innerHTML = `
+    ${flowRuntimeStylesheetLinks()}
+    <style>${FLOW_RUNTIME_CSS}</style>
+    <style>${cleanCss}</style>
+    <style>
+      [data-tc-type="image-banner"] {
+        display: block !important;
+        width: 100% !important;
+        max-width: 100% !important;
+        height: auto !important;
+        overflow: visible !important;
+        line-height: 0 !important;
+        position: relative !important;
+      }
+      [data-tc-type="image-banner"] > img,
+      .page-wrapper > img {
+        display: block !important;
+        position: relative !important;
+        top: auto !important;
+        left: auto !important;
+        width: 100% !important;
+        max-width: 100% !important;
+        height: auto !important;
+        max-height: none !important;
+        object-fit: contain !important;
+      }
+      .page-wrapper, .flow-page-inner {
+        overflow: visible !important;
+        margin-left: 0 !important;
+        margin-right: 0 !important;
+        padding-left: 0 !important;
+        padding-right: 0 !important;
+      }
+    </style>
+    <div class="flow-page-inner" id="wrapper" style="${inlineStyles}">${cleanedHtml}</div>
+  `
+
+  function finishLiveLayout() {
+    healLiveHotspots(shadow, pageData.pageType)
+    healLiveFlowButtons(shadow)
+  }
+
+  finishLiveLayout()
+  const imgs = shadow.querySelectorAll('img')
+  if (imgs.length) {
+    let left = imgs.length
+    const redo = () => {
+      left -= 1
+      if (left <= 0) finishLiveLayout()
+    }
+    imgs.forEach((img) => {
+      if (img.complete) redo()
+      else {
+        img.addEventListener('load', redo, { once: true })
+        img.addEventListener('error', redo, { once: true })
+      }
+    })
+  } else {
+    requestAnimationFrame(finishLiveLayout)
+  }
+}
+
+function syncPackPicker(shadow, selectedPack) {
+  shadow.querySelectorAll('[data-pack]').forEach((el) => {
+    const isSelected = el.getAttribute('data-pack') === selectedPack
+    el.classList.toggle('flow-pack-selected', isSelected)
+  })
+}
+
+/** Fill empty {{phone}} slots on CONFIRM / thank-you style pages. */
+function syncPhoneDisplay(shadow, phone) {
+  if (!shadow || !phone) return
+  shadow.querySelectorAll('.flow-info-value').forEach((el) => {
+    const text = (el.textContent || '').trim()
+    if (!text || text === '{{phone}}') {
+      el.textContent = phone
+    }
+  })
+}
+
+function getSelectedPackFromShadow(shadow) {
+  const selected = shadow.querySelector('[data-pack].flow-pack-selected')
+  return normalizePack(selected?.getAttribute('data-pack'))
+}
+
+export {
+  mountPageInShadow,
+  syncPackPicker,
+  syncPhoneDisplay,
+  getSelectedPackFromShadow,
+}

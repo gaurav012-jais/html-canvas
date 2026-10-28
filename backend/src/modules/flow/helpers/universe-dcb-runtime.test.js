@@ -1,0 +1,138 @@
+import { describe, it } from 'node:test';
+import assert from 'node:assert/strict';
+import {
+  decorateUniverseDcbDetectResponse,
+  decorateUniverseDcbPageResponse,
+  dcbFlowContextForPage,
+  isExplicitHomeDestination,
+} from './universe-dcb-runtime.js';
+
+describe('Universe DCB detect runtime', () => {
+  it('routes a missing phone to manual MSISDN on OTP', () => {
+    const result = decorateUniverseDcbDetectResponse(
+      { phone: '', nextPage: null, successRedirectUrl: 'https://example.test' },
+      null,
+    );
+    assert.equal(result.nextPage, 'OTP');
+    assert.equal(result.successRedirectUrl, null);
+    assert.equal(result.flowContext.stage, 'MANUAL_MSISDN');
+    assert.equal(result.verificationMode, 'UNIVERSE_DCB');
+  });
+
+  it('maps normalized outcomes to funnel pages', () => {
+    const expected = new Map([
+      ['ENTITLED', 'THANKYOU'],
+      ['NEW', 'HOME'],
+      ['LOW_BALANCE', 'LOW_BALANCE'],
+      ['PENDING', 'INPROGRESS'],
+      ['TERMINAL_FAILURE', 'ERROR'],
+      ['PARSE_ERROR', 'ERROR'],
+    ]);
+    for (const [outcome, page] of expected) {
+      const result = decorateUniverseDcbDetectResponse(
+        { phone: '9725550001', successRedirectUrl: 'https://example.test' },
+        { outcome, status: outcome },
+      );
+      assert.equal(result.nextPage, page);
+      assert.equal(result.flowContext.outcome, outcome);
+      assert.equal(result.successRedirectUrl, null);
+    }
+
+    const pendingPinResult = decorateUniverseDcbDetectResponse(
+      { phone: '9725550001' },
+      { outcome: 'PENDING', status: 'PENDING_PIN' },
+    );
+    assert.equal(pendingPinResult.nextPage, 'OTP');
+    assert.equal(pendingPinResult.flowContext.stage, 'PIN_REQUIRED');
+  });
+
+  it('honors custom checksubConfig rules for DCB statuses', () => {
+    const checksubConfig = {
+      rules: [
+        { value: 'PENDING_PIN', go: 'page', page: 'HOME' },
+        { value: 'SPECIAL_ACTIVE', go: 'page', page: 'THANKYOU' },
+      ],
+    };
+    const res1 = decorateUniverseDcbDetectResponse(
+      { phone: '9725550001' },
+      { outcome: 'PENDING', status: 'PENDING_PIN' },
+      { checksubConfig },
+    );
+    assert.equal(res1.nextPage, 'HOME');
+
+    const res2 = decorateUniverseDcbDetectResponse(
+      { phone: '9725550001' },
+      { outcome: 'PENDING', status: 'SPECIAL_ACTIVE' },
+      { checksubConfig },
+    );
+    assert.equal(res2.nextPage, 'THANKYOU');
+
+    const res3 = decorateUniverseDcbDetectResponse(
+      { phone: '9725550001' },
+      { outcome: 'NEW', status: 'NEW' },
+      { checksubConfig: { rules: [{ value: 'CUSTOM', go: 'page', page: 'OTP' }] } },
+    );
+    assert.equal(res3.nextPage, 'HOME');
+  });
+});
+
+describe('Universe DCB page runtime', () => {
+  it('provides identity and PIN stages from phone presence', () => {
+    assert.equal(dcbFlowContextForPage('HOME', '').stage, 'MANUAL_MSISDN');
+    assert.equal(dcbFlowContextForPage('OTP', '').stage, 'MANUAL_MSISDN');
+    assert.equal(dcbFlowContextForPage('HOME', '555').stage, 'PLAN_SELECT');
+    assert.equal(dcbFlowContextForPage('OTP', '555').stage, 'PIN_REQUIRED');
+  });
+
+  it('adds polling timings and outcome contexts', () => {
+    const response = decorateUniverseDcbPageResponse(
+      { pageType: 'INPROGRESS' },
+      '555',
+      { pollIntervalMs: 2500, pollTimeoutMs: 45000 },
+    );
+    assert.equal(response.verificationMode, 'UNIVERSE_DCB');
+    assert.equal(response.flowContext.stage, 'POLLING');
+    assert.equal(response.flowContext.pollIntervalMs, 2500);
+    assert.equal(response.flowContext.pollTimeoutMs, 45000);
+    assert.equal(dcbFlowContextForPage('THANKYOU', '555').outcome, 'ENTITLED');
+    assert.equal(
+      dcbFlowContextForPage('LOW_BALANCE', '555').outcome,
+      'LOW_BALANCE',
+    );
+    assert.equal(
+      dcbFlowContextForPage('ERROR', '555').outcome,
+      'TERMINAL_FAILURE',
+    );
+  });
+});
+
+describe('isExplicitHomeDestination', () => {
+  it('treats a rule that names HOME as explicit', () => {
+    assert.equal(
+      isExplicitHomeDestination('NEW', {
+        rules: [{ value: 'NEW', go: 'page', page: 'HOME' }],
+      }),
+      true,
+    );
+  });
+
+  it('treats continue-to-plan as the default pack step', () => {
+    assert.equal(
+      isExplicitHomeDestination('NEW', {
+        rules: [{ value: 'NEW', go: 'continue' }],
+      }),
+      false,
+    );
+  });
+
+  it('treats an unmatched miss that opens HOME as explicit', () => {
+    assert.equal(
+      isExplicitHomeDestination('OTHER', {
+        rules: [{ value: 'SPECIAL', go: 'page', page: 'OTP' }],
+        missGo: 'page',
+        missPage: 'HOME',
+      }),
+      true,
+    );
+  });
+});

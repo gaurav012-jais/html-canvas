@@ -1,0 +1,1066 @@
+import './editor.css'
+import { useEffect, useRef, useCallback, useState } from 'react'
+import grapesjs from 'grapesjs'
+import 'grapesjs/dist/css/grapes.min.css'
+import { createGrapesConfig } from './grapesConfig'
+import { registerAllBlocks } from './blocks'
+import { setupAssetUpload, restoreAssetsFromProjectData } from './plugins/assetUpload'
+import { setupAssetCanvasDrop } from './plugins/assetDrag'
+import { setupCanvasEnhancements, setCanvasZoom, applyDeviceViewport, syncCanvasFrameHeight } from './plugins/canvasEnhancements'
+import { setupDragUnstick } from './plugins/dragUnstick'
+import { setupEditorExperience } from './plugins/editorExperience'
+import { setupTextEditing } from './plugins/textEditing'
+import { ensureAllTextEditable } from './utils/textContent'
+import { setupPagesManager } from './plugins/pagesManager'
+import {
+  setupDragAndDrop,
+  ensureBlockManagerMounted,
+  filterBlockElements,
+} from './plugins/dragAndDrop'
+import { loadIntoEditor } from './services/loadTemplate'
+import {
+  cloneLayout,
+  layoutKeyForDevice,
+  LAYOUT_MOBILE,
+  parseDeviceLayouts,
+  snapshotLayout,
+} from './services/deviceLayouts'
+import { getTemplatePayload } from './services/saveTemplate'
+import { exportAllPagesFromEditor, exportCurrentPageFromEditor } from './services/exportSite'
+import { EditorProvider } from './context/EditorContext'
+import { EditorShell } from './shell/EditorShell'
+import useStore from '../store/useStore'
+import { listSectionAnchorsOnPage } from './utils/sectionAnchor'
+import { trackEvent } from '../utils/analytics'
+import { injectStylesheetsIntoCanvas, runDevModeStylesValidation } from './utils/styleUtils'
+import { safeGetWrapper, getComp } from './utils/editorUtils'
+import { applyTextSizeAlignment, healFlowButtonsInEditor, configureFlowButtonResizable, configureBlockResizable, isFlowLayoutButton, keepFlowButtonInFlow, isButtonLikeComponent } from './utils/textSizeAlign'
+import { markAsAbsoluteOverlay, promoteOverlayIfNeeded, dropPointHitsImage, isImageComponent, healEditorHotspot, wrapImageAsBanner, IMAGE_BANNER_STYLE, HOTSPOT_RESIZABLE, freezeHotspotToPixels } from './utils/overlayStacking'
+import { setDcbEditorPreview } from '../services/flow/dcbStageUi'
+
+export default function TemplateEditor({
+  projectId,
+  projectTitle,
+  breadcrumbLabel,
+  breadcrumbHref,
+  funnelPageType,
+  verificationMode,
+  campaignId,
+  countryCode,
+  operatorCode,
+  projectCreatedAt,
+  projectMetadata,
+  initialData,
+  onSave,
+  onDirtyChange,
+  onPreview,
+  saveHandler,
+  step,
+}) {
+  const containerRef = useRef(null)
+  const editorRef = useRef(null)
+  const initializedRef = useRef(false)
+  const cleanupExperienceRef = useRef(null)
+  const layoutsRef = useRef(parseDeviceLayouts(initialData?.projectData, initialData?.html, initialData?.css))
+  const layoutSwitchRef = useRef(false)
+  const deviceRef = useRef('Mobile')
+
+  const [editor, setEditor] = useState(null)
+  const [isEmpty, setIsEmpty] = useState(true)
+  const [device, setDevice] = useState('Mobile')
+  const [zoom, setZoom] = useState(100)
+  const [advancedMode, setAdvancedMode] = useState(false)
+  const [selectionVersion, setSelectionVersion] = useState(0)
+  const [saving, setSaving] = useState(false)
+  const [isDirty, setIsDirty] = useState(false)
+  const [customWidth, setCustomWidth] = useState(() => (initialData?.projectData?.customWidth?.toString() || '1200'))
+  const [customHeight, setCustomHeight] = useState(() => (initialData?.projectData?.customHeight?.toString() || '800'))
+  const [dragDebug, setDragDebug] = useState({
+    draggedItem: null,
+    selectedItem: null,
+    editorState: 'idle',
+    componentCount: 0,
+    lastEvent: '—',
+    dropSuccess: false,
+    isDragging: false,
+    isOverCanvas: false,
+  })
+
+  if (import.meta.env.DEV) {
+    console.log('[TemplateEditor] Rendering. isEmpty:', isEmpty, 'dragDebugState:', dragDebug.editorState)
+  }
+
+  const refreshSelection = useCallback(() => setSelectionVersion((v) => v + 1), [])
+
+  const callbacksRef = useRef({ onSave, onDirtyChange, onPreview, projectCreatedAt, projectMetadata, projectId, projectTitle, saveHandler, customWidth, customHeight })
+  useEffect(() => {
+    callbacksRef.current = { onSave, onDirtyChange, onPreview, projectCreatedAt, projectMetadata, projectId, projectTitle, saveHandler, customWidth, customHeight }
+  }, [onSave, onDirtyChange, onPreview, projectCreatedAt, projectMetadata, projectId, projectTitle, saveHandler, customWidth, customHeight])
+
+  useEffect(() => {
+    const ed = editorRef.current
+    if (!ed || !customWidth) return
+    const customDevice = ed.Devices.get('Custom')
+    if (customDevice) {
+      const px = `${customWidth}px`
+      if (customDevice.get('width') !== px) {
+        customDevice.set('width', px)
+      }
+    }
+    const selected = ed.Devices.getSelected()
+    if (selected && String(selected.get('name')) === 'Custom') {
+      const frameEl = ed.Canvas?.getFrameEl?.()
+      if (frameEl) frameEl.style.width = `${customWidth}px`
+    }
+  }, [customWidth])
+
+  const commitActiveRte = (ed) => {
+    if (!ed) return
+    try {
+      if (ed.Commands?.isActive?.('core:rte')) {
+        ed.Commands.stop('core:rte')
+      }
+    } catch (_) {}
+    try {
+      if (ed.rte?.end) {
+        ed.rte.end()
+      }
+    } catch (_) {}
+  }
+
+  const handleSave = useCallback(async () => {
+    const ed = editorRef.current
+    if (!ed) return
+    commitActiveRte(ed)
+    setSaving(true)
+    try {
+      const { projectId: id, projectTitle: name, projectCreatedAt: createdAt, projectMetadata: metadata, onSave: saveCb, onDirtyChange: dirtyCb, saveHandler: customSave, customWidth: cw, customHeight: ch } =
+        callbacksRef.current
+      const meta = { id, name, createdAt, metadata, customWidth: cw, customHeight: ch }
+      if (!customSave) {
+        useStore.getState().addToast('Save handler not configured', 'error')
+        return
+      }
+      const saved = await customSave(ed, meta)
+      dirtyCb?.(false)
+      setIsDirty(false)
+      saveCb?.(saved)
+    } finally {
+      setSaving(false)
+    }
+  }, [])
+
+  const handlePreview = useCallback(async () => {
+    const ed = editorRef.current
+    if (!ed) return
+    commitActiveRte(ed)
+    const { projectTitle: name, onPreview: previewCb } = callbacksRef.current
+    // Auto-save so Preview matches what you see on the canvas (WYSIWYG)
+    if (isDirty) {
+      await handleSave()
+    }
+    if (previewCb) {
+      previewCb(getTemplatePayload(ed, name))
+    }
+  }, [isDirty, handleSave])
+
+  const handlePublish = useCallback(async () => {
+    await handleSave()
+    handlePreview()
+  }, [handleSave, handlePreview])
+
+  const handleExportCurrent = useCallback(() => {
+    const ed = editorRef.current
+    if (!ed) return
+    commitActiveRte(ed)
+    exportCurrentPageFromEditor(ed, callbacksRef.current.projectTitle)
+    trackEvent('exports')
+  }, [])
+
+  const handleExportAll = useCallback(() => {
+    const ed = editorRef.current
+    if (!ed) return
+    commitActiveRte(ed)
+    exportAllPagesFromEditor(ed, callbacksRef.current.projectTitle)
+    trackEvent('exports')
+  }, [])
+
+  const switchDevice = useCallback((nextName) => {
+    const ed = editorRef.current
+    if (!ed || !nextName) return
+    commitActiveRte(ed)
+    const prevName = deviceRef.current || 'Desktop'
+    const fromKey = layoutKeyForDevice(prevName)
+    const toKey = layoutKeyForDevice(nextName)
+
+    if (!layoutsRef.current) {
+      layoutsRef.current = { desktop: null, mobile: null }
+    }
+    const { customWidth: cw, customHeight: ch } = callbacksRef.current
+    const currentSnapshot = snapshotLayout(ed, prevName, cw, ch)
+    layoutsRef.current[fromKey] = currentSnapshot
+
+    if (fromKey !== toKey) {
+      // Preserve existing device layout if present; only clone if target layout does not exist yet
+      let target = layoutsRef.current[toKey]
+      if (!target || !target.html) {
+        target = cloneLayout(currentSnapshot, {
+          customWidth: toKey === LAYOUT_MOBILE ? '375' : cw,
+        })
+        if (target) {
+          layoutsRef.current[toKey] = target
+          setIsDirty(true)
+          callbacksRef.current.onDirtyChange?.(true)
+        }
+      }
+      ed.__tcLayouts = layoutsRef.current
+      if (target?.html) {
+        layoutSwitchRef.current = true
+        try {
+          loadIntoEditor(ed, target)
+          healFlowButtonsInEditor(ed)
+          const wrapper = ed.getWrapper()
+          if (wrapper) {
+            const walk = (cmp) => {
+              if (cmp.getAttributes?.()?.['data-tc-type'] === 'hotspot') {
+                try {
+                  healEditorHotspot(cmp, ed, { geometry: 'pixels' })
+                } catch (_) {
+                  /* noop */
+                }
+              }
+              cmp.components?.()?.forEach?.(walk)
+            }
+            walk(wrapper)
+          }
+          injectStylesheetsIntoCanvas(ed)
+          ensureAllTextEditable(ed)
+          if (String(funnelPageType || '').toUpperCase() === 'OTP') {
+            setDcbEditorPreview(ed, step || 'number')
+          }
+        } finally {
+          window.setTimeout(() => {
+            layoutSwitchRef.current = false
+            syncCanvasFrameHeight(ed, { allowShrink: true })
+            if (String(funnelPageType || '').toUpperCase() === 'OTP') {
+              setDcbEditorPreview(ed, step || 'number')
+            }
+          }, 80)
+        }
+      }
+    } else {
+      ed.__tcLayouts = layoutsRef.current
+    }
+
+    ed.setDevice(nextName)
+    deviceRef.current = nextName
+    setDevice(nextName)
+  }, [])
+
+  useEffect(() => {
+    if (import.meta.env.DEV) console.log('[TemplateEditor] useEffect triggered for projectId:', projectId)
+    if (!containerRef.current || initializedRef.current) {
+      if (import.meta.env.DEV) {
+        console.log('[TemplateEditor] useEffect skip. Already initialized:', initializedRef.current)
+      }
+      return
+    }
+
+    if (import.meta.env.DEV) console.log('[TemplateEditor] Initializing GrapesJS...')
+    initializedRef.current = true
+    let mounted = true
+
+    if (containerRef.current) containerRef.current.innerHTML = ''
+    const blocksMount = document.getElementById('tc-blocks-mount')
+    if (blocksMount) blocksMount.innerHTML = ''
+    const layersMount = document.getElementById('tc-layers-panel')
+    if (layersMount) layersMount.innerHTML = ''
+
+    const config = createGrapesConfig(containerRef.current)
+    const hostLinks = Array.from(document.querySelectorAll('link[rel="stylesheet"]'))
+      .map((l) => l.href)
+      .filter(Boolean)
+    const defaultStyles = [
+      'https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap',
+      'https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/tabler-icons.min.css',
+      'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css',
+    ]
+    if (config.canvas) {
+      config.canvas.styles = [
+        ...(config.canvas.styles || []),
+        ...defaultStyles,
+        ...hostLinks,
+      ]
+    }
+
+    const ed = grapesjs.init(config)
+    editorRef.current = ed
+    layoutsRef.current = parseDeviceLayouts(
+      initialData?.projectData,
+      initialData?.html,
+      initialData?.css,
+    )
+    ed.__tcLayouts = layoutsRef.current
+    setEditor(ed)
+
+    ed.Components.addType('hotspot', {
+      isComponent: (el) => el.getAttribute && el.getAttribute('data-tc-type') === 'hotspot',
+      model: {
+        defaults: {
+          tagName: 'a',
+          draggable: true,
+          droppable: false,
+          resizable: HOTSPOT_RESIZABLE,
+          traits: [
+            {
+              type: 'text',
+              name: 'href',
+              label: 'Link URL',
+            },
+            {
+              type: 'select',
+              name: 'target',
+              label: 'Open in',
+              options: [
+                { id: '_self', value: '_self', name: 'Same Window' },
+                { id: '_blank', value: '_blank', name: 'New Window' },
+              ]
+            }
+          ]
+        }
+      }
+    })
+
+    ed.Commands.add('tc-add-hotspot', {
+      run(ed, _sender, opts = {}) {
+        let target = opts.target || ed.getSelected()
+        if (!target) {
+          console.warn('[tc-add-hotspot] No valid target component')
+          return
+        }
+
+        const targetTag = (target.get?.('tagName') || '').toLowerCase()
+        const targetTc = target.getAttributes?.()?.['data-tc-type']
+
+        if (targetTc === 'hotspot') {
+          target = target.parent() || target
+        } else if (targetTag === 'img' || targetTc === 'image') {
+          const host = wrapImageAsBanner(target)
+          if (host) target = host
+        } else if (targetTc !== 'image-banner') {
+          const kids = target.components?.()
+          const len = kids?.length || 0
+          for (let i = 0; i < len; i++) {
+            const child = typeof kids.at === 'function' ? kids.at(i) : kids.models?.[i]
+            if (child && isImageComponent(child)) {
+              const host = wrapImageAsBanner(child)
+              if (host) target = host
+              break
+            }
+          }
+        }
+
+        if (typeof target.components !== 'function') {
+          console.warn('[tc-add-hotspot] Target component cannot accept children')
+          return
+        }
+
+        target.addStyle?.(IMAGE_BANNER_STYLE)
+        const pStyle = target.getStyle?.() || {}
+        if (!['absolute', 'relative', 'fixed'].includes(pStyle.position || '')) {
+          target.addStyle?.({ position: 'relative' })
+        }
+
+        const hotspotStyle = opts.coverFull
+          ? {
+              position: 'absolute',
+              top: '0%',
+              left: '0%',
+              width: '100%',
+              height: '100%',
+              display: 'block',
+              'z-index': '50',
+              cursor: 'pointer',
+              'text-decoration': 'none',
+            }
+          : {
+              position: 'absolute',
+              top: '40%',
+              left: '25%',
+              width: '50%',
+              height: '12%',
+              display: 'block',
+              'z-index': '50',
+              cursor: 'pointer',
+              'text-decoration': 'none',
+            }
+
+        const children = target.components()
+        const hotspot = children.add({
+          tagName: 'a',
+          type: 'hotspot',
+          attributes: {
+            'data-tc-type': 'hotspot',
+            'data-action': 'SUBSCRIBE',
+            href: '#',
+            title: 'Subscribe Hotspot',
+            ...(opts.coverFull ? { 'data-tc-cover-full': '1' } : {}),
+          },
+          style: hotspotStyle,
+          draggable: true,
+          droppable: false,
+          resizable: HOTSPOT_RESIZABLE,
+          selectable: true,
+          hoverable: true,
+        })
+
+        console.log('[tc-add-hotspot] Added hotspot to', target.get?.('tagName'), hotspot)
+
+        setTimeout(() => {
+          try {
+            const h = Array.isArray(hotspot) ? hotspot[0] : hotspot
+            if (h) ed.select(h)
+          } catch (e) {
+            console.warn('[tc-add-hotspot] Select failed:', e)
+          }
+        }, 100)
+      }
+    })
+
+    if (import.meta.env.DEV) {
+      window.editor = ed
+    }
+
+    registerAllBlocks(ed, funnelPageType, verificationMode)
+    setupAssetUpload(ed)
+    setupAssetCanvasDrop(ed)
+    const cleanupDragAndDrop = setupDragAndDrop(ed, setDragDebug)
+    const cleanupCanvasEnhancements = setupCanvasEnhancements(ed, (empty) => mounted && setIsEmpty(empty))
+    const cleanupDragUnstick = setupDragUnstick(ed)
+    const cleanupTextEditing = setupTextEditing(ed, refreshSelection)
+
+    let lastDragEvent = null
+    let isDraggingBlock = false
+
+    const handleDragMove = (e) => {
+      if (!isDraggingBlock) return
+      const clientX = e.clientX ?? e.touches?.[0]?.clientX
+      const clientY = e.clientY ?? e.touches?.[0]?.clientY
+      if (clientX != null && clientY != null) {
+        lastDragEvent = { clientX, clientY }
+      }
+    }
+
+    const attachFrameDragListeners = () => {
+      try {
+        const frameEl = ed.Canvas?.getFrameEl?.()
+        const frameDoc = frameEl?.contentDocument
+        if (!frameDoc || frameDoc.__tcDragTrackAttached) return
+        frameDoc.__tcDragTrackAttached = true
+
+        const onFrameMove = (e) => {
+          if (!isDraggingBlock) return
+          const fr = frameEl.getBoundingClientRect()
+          const zoom = (ed.Canvas?.getZoom?.() || 100) / 100
+          lastDragEvent = {
+            clientX: fr.left + e.clientX * zoom,
+            clientY: fr.top + e.clientY * zoom,
+          }
+        }
+        frameDoc.addEventListener('mousemove', onFrameMove, true)
+        frameDoc.addEventListener('pointermove', onFrameMove, true)
+      } catch (_) {
+        /* noop */
+      }
+    }
+
+    ed.on('block:drag:start', () => {
+      isDraggingBlock = true
+      attachFrameDragListeners()
+      window.addEventListener('mousemove', handleDragMove, true)
+      window.addEventListener('pointermove', handleDragMove, true)
+    })
+
+    ed.on('block:drag:stop', () => {
+      isDraggingBlock = false
+      window.removeEventListener('mousemove', handleDragMove, true)
+      window.removeEventListener('pointermove', handleDragMove, true)
+    })
+
+    ed.on('canvas:dragover', (e) => {
+      if (e && e.clientX !== undefined) lastDragEvent = e
+    })
+
+    ed.on('component:add', (component) => {
+      const parent = component.parent()
+      const isTopLevel = parent && (parent.get('type') === 'wrapper' || parent === safeGetWrapper(ed))
+      if (!isTopLevel) return
+
+      const tag = (component.get('tagName') || '').toLowerCase()
+      const SECTION_TAGS = new Set(['section', 'header', 'footer', 'nav', 'main', 'article'])
+      const isSection = SECTION_TAGS.has(tag) || component.getAttributes()?.['data-tc-type'] === 'section'
+      if (!isSection || tag === 'header' || tag === 'footer') return
+
+      const html = component.toHTML ? component.toHTML() : ''
+      const text = (component.getEl?.()?.textContent || '').toLowerCase()
+      
+      let proposed = ''
+      if (html.includes('<form') || text.includes('contact') || text.includes('get in touch')) {
+        proposed = 'contact'
+      } else if (text.includes('pricing') || html.includes('pricing') || text.includes('$') || text.includes('/mo')) {
+        proposed = 'pricing'
+      } else if (text.includes('features') || text.includes('lightning fast') || text.includes('responsive')) {
+        proposed = 'features'
+      } else if (text.includes('about') || text.includes('our team') || text.includes('meet the team')) {
+        proposed = 'about'
+      } else {
+        const children = parent.components().models || []
+        const nonHeaderSections = children.filter((c) => {
+          const t = (c.get('tagName') || '').toLowerCase()
+          return t !== 'header' && t !== 'nav'
+        })
+        if (nonHeaderSections.length === 0 || nonHeaderSections[0] === component) {
+          proposed = 'hero'
+        }
+      }
+
+      if (!proposed) proposed = 'section'
+
+      let finalId = proposed
+      let counter = 1
+      if (proposed === 'section') {
+        finalId = `section-${counter}`
+      }
+
+      const findConflict = (anchorId) => {
+        let found = false
+        ed.Pages.getAll().forEach((page) => {
+          const root = page.getMainComponent()
+          if (!root) return
+          const walk = (cmp) => {
+            if (cmp === component) return
+            if (cmp.getAttributes()?.id === anchorId) found = true
+            cmp.components().forEach(walk)
+          }
+          walk(root)
+        })
+        return found
+      }
+
+      while (findConflict(finalId)) {
+        if (proposed === 'section') {
+          counter++
+          finalId = `section-${counter}`
+        } else {
+          finalId = `${proposed}-${counter}`
+          counter++
+        }
+      }
+
+      setTimeout(() => {
+        if (!mounted || editorRef.current !== ed || !safeGetWrapper(ed)) return
+        component.setId(finalId)
+        component.set('sectionId', finalId)
+
+        let label = 'Section'
+        if (proposed === 'hero') label = 'Hero Section'
+        else if (proposed === 'features') label = 'Features Section'
+        else if (proposed === 'pricing') label = 'Pricing Section'
+        else if (proposed === 'contact') label = 'Contact Section'
+        else if (proposed === 'about') label = 'About Section'
+        else if (proposed.startsWith('section-')) label = `Section ${proposed.split('-')[1]}`
+        
+        component.set('sectionLabel', label)
+      }, 0)
+    })
+
+    ed.on('component:add', (component) => {
+      setTimeout(() => {
+        if (!mounted || editorRef.current !== ed) return
+
+        const type = component.get('type')
+        const tag = (component.get('tagName') || '').toLowerCase()
+        const isWrapperOrSection =
+          type === 'wrapper' ||
+          tag === 'body' ||
+          ['section', 'header', 'footer', 'main'].includes(tag) ||
+          component.getAttributes()?.['data-tc-type'] === 'section'
+
+        if (isWrapperOrSection) return
+
+        const isButton = isButtonLikeComponent(component) || isFlowLayoutButton(component)
+        const parent = component.parent()
+
+        if (parent && isDraggingBlock && lastDragEvent && lastDragEvent.clientX !== undefined) {
+          const parentEl = parent.getEl ? parent.getEl() : null
+          const frameEl = ed.Canvas?.getFrameEl?.()
+          const frameDoc = frameEl?.contentDocument
+          const frameRect = frameEl ? frameEl.getBoundingClientRect() : null
+          const zoom = (ed.Canvas?.getZoom?.() || 100) / 100
+
+          let iframeX = lastDragEvent.clientX
+          let iframeY = lastDragEvent.clientY
+          if (frameRect) {
+            iframeX = (lastDragEvent.clientX - frameRect.left) / zoom
+            iframeY = (lastDragEvent.clientY - frameRect.top) / zoom
+          }
+
+          let droppedOnImage = false
+          if (frameDoc && frameDoc.elementsFromPoint) {
+            const hitElements = frameDoc.elementsFromPoint(iframeX, iframeY) || []
+            droppedOnImage = hitElements.some(
+              (el) =>
+                el.tagName === 'IMG' ||
+                el.getAttribute?.('data-tc-type') === 'image-banner' ||
+                el.closest?.('[data-tc-type="image-banner"]')
+            )
+          }
+          if (!droppedOnImage && parentEl) {
+            droppedOnImage = dropPointHitsImage(parentEl, lastDragEvent.clientX, lastDragEvent.clientY)
+          }
+
+          if (parentEl && (droppedOnImage || isImageComponent(parent))) {
+            const rect = parentEl.getBoundingClientRect()
+            const topPct = Math.max(0, Math.min(95, ((lastDragEvent.clientY - rect.top) / rect.height) * 100))
+            const leftPct = Math.max(0, Math.min(95, ((lastDragEvent.clientX - rect.left) / rect.width) * 100))
+
+            markAsAbsoluteOverlay(component, {
+              top: `${topPct.toFixed(2)}%`,
+              left: `${leftPct.toFixed(2)}%`,
+              'z-index': '40',
+            })
+          } else if (parent && parent.components) {
+            // Target insertion at closest child Y position within the container
+            const kids = parent.components().models || []
+            if (kids.length > 1) {
+              let closestChild = null
+              let minDiff = Infinity
+              let insertAfter = true
+
+              kids.forEach((childCmp) => {
+                if (childCmp === component) return
+                const childEl = childCmp.getEl ? childCmp.getEl() : null
+                if (!childEl || typeof childEl.getBoundingClientRect !== 'function') return
+                const cRect = childEl.getBoundingClientRect()
+                const childMidY = cRect.top + cRect.height / 2
+                const diff = Math.abs(iframeY - childMidY)
+                if (diff < minDiff) {
+                  minDiff = diff
+                  closestChild = childCmp
+                  insertAfter = iframeY >= childMidY
+                }
+              })
+
+              if (closestChild && typeof closestChild.index === 'function') {
+                const targetIdx = closestChild.index() + (insertAfter ? 1 : 0)
+                const currentIdx = component.index()
+                if (targetIdx !== currentIdx && targetIdx >= 0) {
+                  parent.components().remove(component, { temporary: true })
+                  parent.components().add(component, { at: Math.min(targetIdx, parent.components().length) })
+                }
+              }
+            }
+          }
+        } else if (parent && isImageComponent(parent)) {
+          // Click-add into an image/banner wrapper -> overlay with z-index 40
+          markAsAbsoluteOverlay(component, { top: '40%', left: '25%', 'z-index': '40' })
+        }
+
+        // Ensure non-overlay components near images have z-index 10 so they don't fall behind z-index 1 images
+        const currentStyle = component.getStyle() || {}
+        if (!currentStyle['z-index'] && currentStyle.position !== 'absolute') {
+          const pTc = parent?.getAttributes?.()?.['data-tc-type']
+          if (pTc === 'image-banner' || isImageComponent(parent)) {
+            component.addStyle({ position: 'relative', 'z-index': '10' })
+          }
+        }
+
+        // In-card funnel CTAs stay in flow; overlays on images do not
+        const isOverlay =
+          component.getAttributes()?.['data-tc-absolute'] === '1' ||
+          component.getAttributes()?.['data-tc-type'] === 'hotspot'
+        if (isFlowLayoutButton(component) && !isOverlay) {
+          keepFlowButtonInFlow(component)
+          configureFlowButtonResizable(component)
+        } else if (isButton && isOverlay) {
+          configureFlowButtonResizable(component)
+        } else if (isButton || isImageComponent(component)) {
+          component.set('resizable', true)
+        } else if (component.getAttributes()?.['data-tc-type'] === 'hotspot') {
+          component.set('resizable', HOTSPOT_RESIZABLE)
+          freezeHotspotToPixels(component)
+        } else {
+          configureBlockResizable(component)
+        }
+      }, 50)
+    })
+
+    // After drag: lift buttons above images (img has z-index:1 in canvas CSS)
+    ed.on('component:drag:end', (componentArg) => {
+      if (!mounted || !componentArg) return
+      const component = getComp(componentArg)
+      if (!component) return
+      if (component.getAttributes?.()?.['data-tc-type'] === 'hotspot') {
+        // px → % + restore data-action / pointer-events (absolute drag leaves junk)
+        healEditorHotspot(component, ed, { geometry: 'pixels' })
+        promoteOverlayIfNeeded(component)
+        return
+      }
+      // Lock Canva absolute placements so flow-button heal cannot snap them back
+      const style = component.getStyle?.() || {}
+      const el = typeof component.getEl === 'function' ? component.getEl() : null
+      const pos = String(style.position || el?.style?.position || '').toLowerCase()
+      const hasTopLeft =
+        (style.top != null && style.top !== '') ||
+        (style.left != null && style.left !== '') ||
+        (el?.style?.top && el.style.top !== '') ||
+        (el?.style?.left && el.style.left !== '')
+
+      if (pos === 'absolute' || pos === 'fixed' || hasTopLeft) {
+        markAsAbsoluteOverlay(component)
+      }
+      // Any absolute button/link over or near an image → mark overlay + z-index 40
+      if (isButtonLikeComponent(component) || isFlowLayoutButton(component)) {
+        promoteOverlayIfNeeded(component)
+        configureFlowButtonResizable(component)
+      } else {
+        promoteOverlayIfNeeded(component)
+      }
+    })
+
+    ed.on('component:remove', (removedComponent) => {
+      const id = removedComponent.getAttributes()?.id || removedComponent.getId()
+      if (!id) return
+
+      const root = safeGetWrapper(ed)
+      if (!root) return
+
+      const walk = (cmp) => {
+        const href = cmp.getAttributes()?.href
+        if (href === `#${id}`) {
+          cmp.addAttributes({ href: '#' })
+          const addToast = useStore.getState().addToast
+          if (typeof addToast === 'function') {
+            addToast(`Section "#${id}" was deleted. Intersecting navigation links have been reset.`, 'info')
+          }
+        }
+        cmp.components().forEach(walk)
+      }
+      walk(root)
+    })
+
+    ed.on('change:changesCount', () => {
+      if (!mounted || layoutSwitchRef.current) return
+      setIsDirty(true)
+      callbacksRef.current.onDirtyChange?.(true)
+    })
+
+    ed.on('component:selected', () => mounted && refreshSelection())
+    ed.on('component:deselected', () => mounted && refreshSelection())
+
+    // If an absolute button is selected over an image, keep it above
+    ed.on('component:selected', (component) => {
+      if (!mounted || !component) return
+      if (isButtonLikeComponent(component) || isFlowLayoutButton(component)) {
+        const style = component.getStyle?.() || {}
+        if (String(style.position || '').toLowerCase() === 'absolute') {
+          promoteOverlayIfNeeded(component)
+        }
+        configureFlowButtonResizable(component)
+        return
+      }
+      // Existing sections/blocks may never have been marked resizable on load
+      const before = component.get('resizable')
+      configureBlockResizable(component)
+      if (!before && component.get('resizable')) {
+        // Grapes builds tools before our handler; refresh so handles appear on first click
+        setTimeout(() => {
+          try { ed.Canvas?.refresh?.() } catch (_) { /* noop */ }
+        }, 0)
+      }
+    })
+    ed.on('page:select', () => injectStylesheetsIntoCanvas(ed))
+    ed.on('canvas:ready', () => injectStylesheetsIntoCanvas(ed))
+    ed.on('device:select', (dev) => {
+      if (!mounted) return
+      const name = dev?.get('name') || 'Desktop'
+      deviceRef.current = name
+      setDevice(name)
+    })
+
+    ed.on('component:update', (component) => {
+      if (!mounted) return
+      const tag = (component.get('tagName') || '').toLowerCase()
+      const type = component.get('type') || ''
+      if (tag === 'a' || type === 'link') {
+        const text = (component.getEl?.()?.textContent || '').trim()
+        if (text) {
+          const href = component.getAttributes()?.href || ''
+          if (!href || href === '#' || href.startsWith('#')) {
+            const pageAnchors = listSectionAnchorsOnPage(ed, component)
+            const normalized = text.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9_-]/g, '')
+            const common = ['features', 'pricing', 'contact', 'about', 'faq', 'services', 'hero']
+            if (pageAnchors.includes(normalized) || common.includes(normalized)) {
+              if (href !== `#${normalized}`) {
+                component.addAttributes({ href: `#${normalized}` })
+                refreshSelection()
+              }
+            }
+          }
+        }
+      }
+    })
+
+    ed.on('load', () => {
+      injectStylesheetsIntoCanvas(ed)
+
+      const iframeDoc = ed.Canvas?.getDocument?.()
+      if (iframeDoc) {
+        runDevModeStylesValidation(iframeDoc)
+      }
+      ed.UndoManager.clear()
+      setCanvasZoom(ed, 100)
+
+      // Canva-style free-form drag (restored from working git history)
+      ed.setDragMode('absolute')
+
+      const wrapper = ed.getWrapper()
+      if (wrapper) {
+        const walk = (cmp) => {
+          const style = cmp.getStyle() || {}
+          const isHotspot = cmp.getAttributes()?.['data-tc-type'] === 'hotspot'
+
+          // Clear leftover freeze from a previous stuck session
+          const st = cmp.get('status')
+          if (st === 'freezed' || st === 'freezed-selected') {
+            cmp.set('status', '')
+          }
+
+          if (isHotspot) {
+            healEditorHotspot(cmp, ed, { geometry: 'pixels' })
+          }
+
+          const isAbsolute = style.position === 'absolute' || isHotspot
+          if (isAbsolute) {
+            if (style.margin || style['margin-top'] || style['margin-left']) {
+              const newStyle = { ...style }
+              delete newStyle.margin
+              delete newStyle['margin-top']
+              delete newStyle['margin-left']
+              delete newStyle['margin-right']
+              delete newStyle['margin-bottom']
+              cmp.setStyle(newStyle)
+            }
+            const parent = cmp.parent()
+            if (parent) {
+              const pStyle = parent.getStyle() || {}
+              if (pStyle.position !== 'absolute' && pStyle.position !== 'relative' && pStyle.position !== 'fixed') {
+                parent.addStyle({ position: 'relative' })
+              }
+            }
+            cmp.set('resizable', isHotspot ? HOTSPOT_RESIZABLE : true)
+            cmp.set('draggable', true)
+          }
+          if (style.height && !isHotspot) {
+            try {
+              applyTextSizeAlignment(cmp)
+            } catch (_) {
+              /* noop */
+            }
+          }
+          if (isFlowLayoutButton(cmp)) {
+            configureFlowButtonResizable(cmp)
+          } else if (!isAbsolute) {
+            configureBlockResizable(cmp)
+          }
+          cmp.components().forEach(walk)
+        }
+        walk(wrapper)
+        // One-shot heal; styleUpdate handler is reentrancy-guarded so this cannot freeze the tab
+        healFlowButtonsInEditor(ed)
+
+        // DOM boxes ready after first paint — fix blown hotspots, then clear dirty
+        setTimeout(() => {
+          if (!mounted || editorRef.current !== ed) return
+          const w = ed.getWrapper()
+          if (w) {
+            const walkHs = (cmp) => {
+              if (cmp.getAttributes()?.['data-tc-type'] === 'hotspot') {
+                healEditorHotspot(cmp, ed, { geometry: 'pixels' })
+              }
+              cmp.components()?.forEach?.(walkHs)
+            }
+            walkHs(w)
+          }
+          try {
+            ed.UndoManager.clear()
+          } catch (_) {
+            /* noop */
+          }
+        }, 200)
+      }
+
+      try {
+        const cssRules = ed.CssComposer.getAll();
+        cssRules.forEach((rule) => {
+          const selectors = rule.getSelectors().getFullString();
+          if (
+            selectors.includes('wellness-otp-container') ||
+            selectors.includes('wellness-confirm-container') ||
+            selectors.includes('wellness-home-container')
+          ) {
+            const style = rule.getStyle() || {};
+            if (style['min-height'] === '100vh') {
+              rule.addStyle({ 'min-height': 'auto' });
+            }
+          }
+        });
+      } catch (e) {
+        console.error('Failed to heal CSS rules:', e);
+      }
+
+      if (String(funnelPageType || '').toUpperCase() === 'OTP') {
+        setDcbEditorPreview(ed, step || 'number')
+      }
+
+      requestAnimationFrame(() => {
+        ensureBlockManagerMounted(ed)
+        filterBlockElements(ed, 'sections', '')
+        try {
+          ed.setDevice('Mobile')
+        } catch (_) {}
+        const selectedDev = ed.Devices.getSelected()
+        if (selectedDev) {
+          applyDeviceViewport(ed, String(selectedDev.get('name')))
+        }
+      })
+    })
+
+    const hasExistingPages =
+      initialData.projectData &&
+      typeof initialData.projectData === 'object' &&
+      Array.isArray(initialData.projectData.pages) &&
+      initialData.projectData.pages.length > 0
+
+    if (!hasExistingPages) {
+      setupPagesManager(ed)
+    }
+
+    try {
+      const mobileLayout = layoutsRef.current?.mobile
+      const desktopLayout = layoutsRef.current?.desktop
+      const layoutToLoad = mobileLayout?.html ? mobileLayout : (desktopLayout?.html ? desktopLayout : null)
+      loadIntoEditor(
+        ed,
+        layoutToLoad?.html
+          ? { html: layoutToLoad.html, css: layoutToLoad.css, projectData: initialData.projectData }
+          : initialData,
+      )
+    } catch (err) {
+      console.error('[TemplateEditor] Error loading template:', err)
+      const addToast = useStore.getState().addToast
+      if (typeof addToast === 'function') {
+        addToast(err.message || 'Failed to load template', 'error')
+      }
+    }
+
+    const intervals = [0, 50, 150, 300, 600, 1200]
+    intervals.forEach((delay) => {
+      setTimeout(() => {
+        if (!mounted || editorRef.current !== ed) return
+        ensureAllTextEditable(ed)
+        injectStylesheetsIntoCanvas(ed)
+        syncCanvasFrameHeight(ed)
+        if (String(funnelPageType || '').toUpperCase() === 'OTP') {
+          setDcbEditorPreview(ed, step || 'number')
+        }
+      }, delay)
+    })
+
+    restoreAssetsFromProjectData(ed, initialData.projectData)
+
+    cleanupExperienceRef.current = setupEditorExperience(ed, { onSave: handleSave })
+
+    return () => {
+      if (import.meta.env.DEV) console.log('[TemplateEditor] useEffect cleanup: destroying GrapesJS...')
+      mounted = false
+      initializedRef.current = false
+      cleanupExperienceRef.current?.()
+      cleanupDragAndDrop?.()
+      cleanupCanvasEnhancements?.()
+      cleanupDragUnstick?.()
+      cleanupTextEditing?.()
+      ed.destroy()
+      editorRef.current = null
+      setEditor(null)
+
+      const bMount = document.getElementById('tc-blocks-mount')
+      if (bMount) bMount.innerHTML = ''
+      const lMount = document.getElementById('tc-layers-panel')
+      if (lMount) lMount.innerHTML = ''
+    }
+  }, [projectId])
+
+  useEffect(() => {
+    if (!editor || String(funnelPageType || '').toUpperCase() !== 'OTP') return undefined
+    const currentStep = step || 'number'
+    const apply = () => setDcbEditorPreview(editor, currentStep)
+    apply()
+    editor.on('canvas:frame:load', apply)
+    editor.on('canvas:ready', apply)
+    editor.on('component:mount', apply)
+    editor.on('component:add', apply)
+    editor.on('component:update', apply)
+    return () => {
+      editor.off('canvas:frame:load', apply)
+      editor.off('canvas:ready', apply)
+      editor.off('component:mount', apply)
+      editor.off('component:add', apply)
+      editor.off('component:update', apply)
+    }
+  }, [editor, funnelPageType, step])
+
+  const contextValue = {
+    editor,
+    isEmpty,
+    device,
+    zoom,
+    advancedMode,
+    funnelPageType,
+    verificationMode,
+    step,
+    campaignId,
+    countryCode,
+    operatorCode,
+    customWidth,
+    customHeight,
+    setAdvancedMode,
+    setZoom,
+    setDevice,
+    switchDevice,
+    setCustomWidth,
+    setCustomHeight,
+    refreshSelection,
+    selectionVersion,
+    dragDebug,
+  }
+
+  return (
+    <EditorProvider value={contextValue}>
+      <EditorShell
+        projectTitle={projectTitle}
+        breadcrumbLabel={breadcrumbLabel}
+        breadcrumbHref={breadcrumbHref}
+        funnelPageType={funnelPageType}
+        isDirty={isDirty}
+        saving={saving}
+        canvasRef={containerRef}
+        onSave={handleSave}
+        onPreview={handlePreview}
+        onPublish={handlePublish}
+        onExportCurrent={handleExportCurrent}
+        onExportAll={handleExportAll}
+      />
+    </EditorProvider>
+  )
+}

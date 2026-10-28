@@ -1,0 +1,105 @@
+import express from 'express';
+import cors from 'cors';
+import morgan from 'morgan';
+import { join } from 'path';
+import { existsSync, mkdirSync } from 'fs';
+import swaggerUi from 'swagger-ui-express';
+import getConfig from './config/configuration.js';
+import { registerRoutes } from './routes/index.js';
+import { errorHandler } from './common/middleware/error.middleware.js';
+import {
+  ACCESS_LOG_FORMAT,
+  createDailyAccessLogStream,
+  registerAccessLogTokens,
+} from './common/access-log.js';
+
+export const createApp = async () => {
+  const config = getConfig();
+  const app = express();
+
+  const localUploadDir =
+    config.uploads?.localDir || join(process.cwd(), 'uploads');
+  if (!existsSync(localUploadDir)) {
+    mkdirSync(localUploadDir, { recursive: true });
+  }
+
+  app.set('trust proxy', 1);
+
+  const corsOrigins = config.corsOrigins || [];
+  app.use(
+    cors({
+      origin: (origin, cb) => {
+        if (
+          !origin ||
+          /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(origin)
+        ) {
+          return cb(null, true);
+        }
+        if (corsOrigins.some((allowed) => origin === allowed)) {
+          return cb(null, true);
+        }
+        return cb(new Error('Not allowed by CORS'));
+      },
+      methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
+      credentials: true,
+    }),
+  );
+
+  // Server file: every inbound HTTP hit, all environments, one file per IST day.
+  registerAccessLogTokens(morgan);
+  const accessLogsDir =
+    config.accessLogs?.dir || join(process.cwd(), 'logs', 'access');
+  app.use(
+    morgan(ACCESS_LOG_FORMAT, {
+      stream: createDailyAccessLogStream({ dir: accessLogsDir }),
+    }),
+  );
+
+  // Terminal: only failed HTTP requests. Successful traffic stays quiet.
+  app.use(
+    morgan(config.environment === 'production' ? 'combined' : 'dev', {
+      skip: (_req, res) => res.statusCode < 400,
+    }),
+  );
+  app.use(express.json({ limit: '2mb' }));
+  app.use(express.urlencoded({ extended: true }));
+
+  app.use('/api/media', express.static(localUploadDir));
+
+  const publicDir = join(process.cwd(), 'public');
+  if (existsSync(publicDir)) {
+    app.use(express.static(publicDir));
+  }
+
+  if (config.environment !== 'production') {
+    const openapi = {
+      openapi: '3.0.0',
+      info: {
+        title: 'TemplateCraft API (Express)',
+        description: 'API documentation for TemplateCraft backend',
+        version: '1.0.0',
+      },
+      components: {
+        securitySchemes: {
+          bearerAuth: {
+            type: 'http',
+            scheme: 'bearer',
+            bearerFormat: 'JWT',
+          },
+        },
+      },
+      paths: {},
+    };
+    app.use('/api/docs', swaggerUi.serve, swaggerUi.setup(openapi));
+  }
+
+  app.get(['/api', '/api/'], (_req, res) => {
+    res.json({ status: 'ok', service: 'TemplateCraft API' });
+  });
+
+  registerRoutes(app);
+
+  app.use(errorHandler);
+
+  return app;
+};

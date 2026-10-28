@@ -1,0 +1,2455 @@
+import { useLayoutEffect, useRef, useState, useCallback, useEffect, useMemo } from 'react';
+import { ChevronLeft, ChevronRight, PanelRightClose, PanelRightOpen, Pencil } from 'lucide-react';
+import { useEditor } from '../context/EditorContext';
+import { getComponentKind, getStyleProp, setStyleProp } from '../utils/blockActions';
+import { getInputRestriction, getInputLimits } from '../utils/inputRestrictions';
+import { getFlowElementInfo, hasMixedConversionTriggers } from '../utils/funnelGuide';
+import { getLinkText, getTextContent, setLinkText, setTextContent } from '../utils/textContent';
+import { getSectionAnchorId, setSectionAnchorId, listSectionAnchorsOnPage, ANCHOR_PRESETS } from '../utils/sectionAnchor';
+import { mountAdvancedPanels, ensureComponentStylable } from '../utils/mountAdvancedPanels';
+import { MoveArrows, InnerSpaceArrows, StepArrows } from '../components/SpacingArrows';
+import {
+  parseSpacing,
+  formatSpacing,
+  parseCornerIndex,
+  cornerIndexToCss,
+  cornerLabel,
+  parseTextSizeIndex,
+  textSizeIndexToCss,
+  CORNER_STEPS,
+  TEXT_SIZE_STEPS,
+} from '../utils/spacingUtils';
+import { PAGE_TYPES, PAGE_TYPE_LABELS, getCampaignApiConfig } from '../../services/api/campaigns';
+import { campaignEditPath } from '../../utils/routes';
+import { PriorityChainTrigger } from './PriorityChainModal';
+import { SubscribeRouteTrigger } from './SubscribeRouteModal';
+import { MIN_BTN_WIDTH } from '../utils/textSizeAlign';
+import { coverHotspotFullImage } from '../utils/overlayStacking';
+import { DEFAULT_SUBSCRIBE_ROUTES } from '../utils/subscribeRoutes';
+import {
+  defaultSubServiceId,
+  previewSubscribeUrl,
+  sanitizeSubscribeParam,
+  templateHasSubscribeSlots,
+} from '../utils/subscribeUrlPreview';
+import { CLASSIC_PACK_OPTIONS, editorPackOptions } from '../../components/dashboard/dcbConfig';
+import useStore from '../../store/useStore';
+
+const PROPS_COLLAPSED_KEY = 'tc-editor-props-collapsed';
+const PROPS_WIDTH_KEY = 'tc-editor-props-width';
+const PROPS_WIDTH_DEFAULT = 288;
+const PROPS_WIDTH_MIN = 240;
+const PROPS_WIDTH_MAX = 560;
+const PROPS_WIDTH_ADVANCED_MIN = 360;
+
+function clampPropsWidth(w) {
+  return Math.min(PROPS_WIDTH_MAX, Math.max(PROPS_WIDTH_MIN, Math.round(w)));
+}
+
+function usePropsCollapsed() {
+  const [collapsed, setCollapsed] = useState(() => {
+    try {
+      return localStorage.getItem(PROPS_COLLAPSED_KEY) === '1';
+    } catch {
+      return false;
+    }
+  });
+
+  const toggleCollapsed = useCallback(() => {
+    setCollapsed((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem(PROPS_COLLAPSED_KEY, next ? '1' : '0');
+      } catch {
+        /* ignore */
+      }
+      return next;
+    });
+  }, []);
+
+  return { collapsed, toggleCollapsed };
+}
+
+function usePropsWidth(advancedMode) {
+  const [width, setWidth] = useState(() => {
+    try {
+      const raw = parseInt(localStorage.getItem(PROPS_WIDTH_KEY) || '', 10);
+      if (Number.isFinite(raw)) return clampPropsWidth(raw);
+    } catch {
+      /* ignore */
+    }
+    return PROPS_WIDTH_DEFAULT;
+  });
+
+  const effectiveWidth =
+    advancedMode && width < PROPS_WIDTH_ADVANCED_MIN
+      ? PROPS_WIDTH_ADVANCED_MIN
+      : width;
+
+  const startResize = useCallback((e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const startX = e.clientX;
+    const startW = effectiveWidth;
+
+    const onMove = (ev) => {
+      // Dragging the left edge: mouse left → wider panel
+      const next = clampPropsWidth(startW + (startX - ev.clientX));
+      setWidth(next);
+    };
+    const onUp = () => {
+      document.body.classList.remove('tc-is-dragging');
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      setWidth((w) => {
+        try {
+          localStorage.setItem(PROPS_WIDTH_KEY, String(w));
+        } catch {
+          /* ignore */
+        }
+        return w;
+      });
+    };
+
+    document.body.classList.add('tc-is-dragging');
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  }, [effectiveWidth]);
+
+  return { width: effectiveWidth, startResize };
+}
+
+function formatHtml(html) {
+  if (!html?.trim()) return ''
+  return html
+    .replace(/></g, '>\n<')
+    .replace(/\n{2,}/g, '\n')
+    .trim()
+}
+
+function ComponentCodeEditor({ selected, editor, update }) {
+  const [code, setCode] = useState('');
+  const [isDirty, setIsDirty] = useState(false);
+
+  useLayoutEffect(() => {
+    const el = selected.getEl();
+    if (el) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setCode(formatHtml(el.outerHTML));
+    } else {
+      setCode(formatHtml(selected.toHTML()));
+    }
+    setIsDirty(false);
+  }, [selected, editor, update]);
+
+  const applyCode = () => {
+    try {
+      const newComp = selected.replaceWith(code);
+      if (Array.isArray(newComp)) {
+        editor.select(newComp[0]);
+      } else {
+        editor.select(newComp);
+      }
+      setIsDirty(false);
+      update();
+    } catch (err) {
+      console.error('Failed to apply component code', err);
+    }
+  };
+
+  return (
+    <div className="pt-4 mt-4 border-t border-border">
+      <div className="flex items-center justify-between mb-2">
+        <h3 className="text-xs font-semibold text-fg">Component Code (HTML)</h3>
+      </div>
+      <textarea
+        value={code}
+        onChange={(e) => {
+          setCode(e.target.value);
+          setIsDirty(true);
+        }}
+        spellCheck={false}
+        className="w-full h-32 text-[10px] font-mono p-2 bg-bg-subtle text-fg border border-border rounded resize-y focus:outline-none focus:ring-1 focus:ring-accent"
+      />
+      {isDirty && (
+        <button
+          type="button"
+          onClick={applyCode}
+          className="mt-2 w-full py-1.5 text-[11px] font-semibold bg-accent text-accent-fg rounded hover:bg-accent-hover transition-colors"
+        >
+          Apply Code
+        </button>
+      )}
+    </div>
+  );
+}
+
+function Field({ label, children }) {
+  return (
+    <label className="block space-y-1.5">
+      <span className="text-xs font-medium text-fg-muted">{label}</span>
+      {children}
+    </label>
+  );
+}
+
+function extractUrlFromBgImage(bgImage) {
+  if (!bgImage || typeof bgImage !== 'string' || bgImage === 'none') return ''
+  const match = bgImage.match(/url\(["']?(.+?)["']?\)/)
+  return match ? match[1] : ''
+}
+
+function BackgroundImageField({
+  selected,
+  editor,
+  update,
+}) {
+  const currentBgImage = getStyleProp(selected, 'background-image') || ''
+  const currentUrl = extractUrlFromBgImage(currentBgImage)
+  const hasImage = Boolean(currentBgImage && typeof currentBgImage === 'string' && currentBgImage !== 'none')
+
+  const [showUrlInput, setShowUrlInput] = useState(false)
+  const [urlValue, setUrlValue] = useState('')
+
+  const applyUrl = useCallback((url) => {
+    if (!url.trim()) return
+    const trimmed = url.trim()
+    const existingStyle = selected.getStyle() || {}
+    selected.setStyle({
+      ...existingStyle,
+      'background-image': `url('${trimmed}')`,
+      'background-size': existingStyle['background-size'] || 'cover',
+      'background-position': existingStyle['background-position'] || 'center',
+      'background-repeat': existingStyle['background-repeat'] || 'no-repeat',
+      'position': existingStyle.position || 'relative',
+      'overflow': 'visible',
+    })
+    setShowUrlInput(false)
+    setUrlValue('')
+    update()
+  }, [selected, update])
+
+  return (
+    <div className="space-y-2">
+      <span className="text-xs font-medium text-fg-muted">Background Image</span>
+
+      {hasImage && currentUrl && (
+        <div
+          className="w-full h-16 rounded-lg border border-border bg-bg-subtle overflow-hidden relative"
+          style={{ backgroundImage: `url("${currentUrl}")`, backgroundSize: 'cover', backgroundPosition: 'center' }}
+        >
+          <div className="absolute inset-0 bg-black/20 flex items-center justify-center">
+            <span className="text-[10px] text-white font-medium bg-black/40 px-2 py-0.5 rounded">Background Set</span>
+          </div>
+        </div>
+      )}
+
+      <div className="flex gap-1.5">
+        <button
+          type="button"
+          onClick={() => {
+            if (!editor) return
+            editor.runCommand('open-assets', { target: selected })
+
+            setTimeout(() => {
+              const modalEl = document.querySelector('.gjs-mdl-content')
+              if (!modalEl) return
+
+              const old = modalEl._tcBgClickHandler
+              if (old) modalEl.removeEventListener('click', old, true)
+
+              const handler = (e) => {
+                const target = e.target
+                const isConfirmBtn =
+                  target.closest('[data-key="add"]') ||
+                  target.closest('.gjs-am-add-asset') ||
+                  (target.tagName === 'BUTTON' &&
+                    (target.textContent?.trim().toLowerCase() === 'select' ||
+                      target.textContent?.trim().toLowerCase() === 'add'))
+
+                if (!isConfirmBtn) return
+
+                const highlighted = modalEl.querySelector(
+                  '.gjs-am-asset.gjs-two-color, .gjs-am-asset--selected, .gjs-am-asset:focus-within'
+                )
+
+                const img = highlighted?.querySelector('img')
+                const bgStyle = highlighted?.style?.backgroundImage || ''
+                const srcMatch = bgStyle.match(/url\(["']?(.+?)["']?\)/)
+                const rawUrl = img?.getAttribute('src') || (srcMatch ? srcMatch[1] : '') ||
+                  editor._tc_highlighted_asset_url || ''
+                const url = rawUrl.replace(/https?:\/\/(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+|0\.0\.0\.0)(:\d+)?/g, '')
+
+                if (!url) return
+
+                const bgTarget = editor._tc_asset_target
+                if (!bgTarget) return
+
+                e.preventDefault()
+                e.stopPropagation()
+
+                const existingStyle = bgTarget.getStyle() || {}
+                bgTarget.setStyle({
+                  ...existingStyle,
+                  'background-image': `url("${url}")`,
+                  'background-size': existingStyle['background-size'] || 'cover',
+                  'background-position': existingStyle['background-position'] || 'center',
+                  'background-repeat': existingStyle['background-repeat'] || 'no-repeat',
+                  'position': existingStyle.position || 'relative',
+                  'overflow': 'visible',
+                })
+
+                editor._tc_asset_target = null
+                editor.Modal.close()
+                update()
+              }
+
+              modalEl._tcBgClickHandler = handler
+              modalEl.addEventListener('click', handler, true)
+            }, 400)
+          }}
+          className="flex-1 py-2 text-xs font-medium rounded-lg border border-border bg-bg-subtle hover:border-accent text-fg transition-colors"
+        >
+          {hasImage ? '🖼 Change' : '📁 Browse'}
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            setUrlValue(currentUrl)
+            setShowUrlInput(!showUrlInput)
+          }}
+          className="flex-1 py-2 text-xs font-medium rounded-lg border border-border bg-bg-subtle hover:border-accent text-fg transition-colors"
+          title="Enter image URL directly"
+        >
+          🔗 URL
+        </button>
+      </div>
+
+      {showUrlInput && (
+        <div className="space-y-1.5">
+          <input
+            type="text"
+            className="w-full px-3 py-2 text-xs font-semibold rounded-xl border border-gray-200 bg-gray-50/20 text-gray-800 focus:outline-none focus:ring-2 focus:ring-indigo-500/10 focus:border-indigo-500 transition-all duration-200"
+            placeholder="https://example.com/image.jpg"
+            value={urlValue}
+            onChange={(e) => setUrlValue(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') applyUrl(urlValue)
+              if (e.key === 'Escape') setShowUrlInput(false)
+            }}
+            autoFocus
+          />
+          <div className="flex gap-1.5">
+            <button
+              type="button"
+              onClick={() => applyUrl(urlValue)}
+              className="flex-1 py-1.5 text-xs font-semibold rounded-lg bg-accent text-accent-fg hover:bg-accent-hover transition-colors"
+            >
+              Apply
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowUrlInput(false)}
+              className="flex-1 py-1.5 text-xs font-medium rounded-lg border border-border bg-bg-subtle text-fg transition-colors"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {hasImage && (
+        <button
+          type="button"
+          onClick={() => {
+            setStyleProp(selected, 'background-image', 'none')
+            setShowUrlInput(false)
+            update()
+          }}
+          className="w-full py-1.5 text-xs font-medium rounded-lg border border-danger/30 text-danger bg-danger/5 hover:bg-danger/10 transition-colors"
+        >
+          ✕ Remove Image
+        </button>
+      )}
+    </div>
+  )
+}
+
+function AddHotspotButton({ selected, editor }) {
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        if (!editor || !selected) return
+        editor.runCommand('tc-add-hotspot', { target: selected })
+      }}
+      className="w-full py-2.5 text-sm font-semibold rounded-lg border border-indigo-200 bg-indigo-50/20 text-indigo-700 hover:bg-indigo-50/50 hover:border-indigo-300 transition-colors flex items-center justify-center gap-2"
+    >
+      <span>+</span> Add Clickable Area
+    </button>
+  )
+}
+
+const inputClass =
+  'w-full px-3 py-2 text-xs font-semibold rounded-xl border border-gray-200 bg-gray-50/20 text-gray-800 focus:outline-none focus:ring-2 focus:ring-indigo-500/10 focus:border-indigo-500 transition-all duration-200';
+
+/** Fonts loaded in canvas (Google) + common system faces. */
+const FONT_OPTIONS = [
+  { value: 'Inter, sans-serif', label: 'Inter' },
+  { value: 'Outfit, sans-serif', label: 'Outfit' },
+  { value: '"Plus Jakarta Sans", sans-serif', label: 'Plus Jakarta Sans' },
+  { value: 'Georgia, serif', label: 'Georgia' },
+  { value: 'Arial, Helvetica, sans-serif', label: 'Arial' },
+  { value: '"Times New Roman", Times, serif', label: 'Times' },
+  { value: 'system-ui, sans-serif', label: 'System' },
+];
+
+const TEXT_SIZE_LABELS = ['Small', 'Normal', 'Medium', 'Large', 'XL', '2XL', '3XL', '4XL', 'Huge'];
+
+function fontFamilyKey(value) {
+  if (!value || typeof value !== 'string') return '';
+  return value.replace(/['"]/g, '').split(',')[0].trim().toLowerCase();
+}
+
+function matchFontOptionValue(cssValue) {
+  const key = fontFamilyKey(cssValue);
+  if (!key) return '';
+  const found = FONT_OPTIONS.find((o) => fontFamilyKey(o.value) === key);
+  return found ? found.value : '';
+}
+
+function FontFamilyField({ selected, update }) {
+  const current = getStyleProp(selected, 'font-family') || '';
+  const matched = matchFontOptionValue(current);
+  const selectValue = matched || (current ? '__custom__' : '');
+
+  return (
+    <Field label="Font">
+      <select
+        className={inputClass}
+        value={selectValue}
+        onChange={(e) => {
+          const v = e.target.value;
+          if (!v || v === '__custom__') return;
+          setStyleProp(selected, 'font-family', v);
+          update();
+        }}
+      >
+        <option value="">Default</option>
+        {FONT_OPTIONS.map((f) => (
+          <option key={f.value} value={f.value} style={{ fontFamily: f.value }}>
+            {f.label}
+          </option>
+        ))}
+        {current && !matched && (
+          <option value="__custom__">{current.replace(/['"]/g, '').split(',')[0].trim()}</option>
+        )}
+      </select>
+    </Field>
+  );
+}
+
+function TextSizeField({ selected, update }) {
+  const idx = parseTextSizeIndex(getStyleProp(selected, 'font-size'));
+  return (
+    <StepArrows
+      label="Text size"
+      valueLabel={TEXT_SIZE_LABELS[idx] || 'Normal'}
+      decreaseTitle="Smaller text"
+      increaseTitle="Larger text"
+      onDecrease={() => {
+        const next = Math.max(0, idx - 1);
+        setStyleProp(selected, 'font-size', textSizeIndexToCss(next));
+        update();
+      }}
+      onIncrease={() => {
+        const next = Math.min(TEXT_SIZE_STEPS.length - 1, idx + 1);
+        setStyleProp(selected, 'font-size', textSizeIndexToCss(next));
+        update();
+      }}
+    />
+  );
+}
+
+function FontWeightField({ selected, update }) {
+  return (
+    <Field label="Font weight">
+      <select
+        className={inputClass}
+        value={getStyleProp(selected, 'font-weight') || '400'}
+        onChange={(e) => {
+          setStyleProp(selected, 'font-weight', e.target.value);
+          update();
+        }}
+      >
+        <option value="400">Regular</option>
+        <option value="500">Medium</option>
+        <option value="600">Semibold</option>
+        <option value="700">Bold</option>
+      </select>
+    </Field>
+  );
+}
+
+function TextColorField({ selected, update, label = 'Text color', fallback = '#334155' }) {
+  return (
+    <Field label={label}>
+      <div className="flex gap-2">
+        <input
+          type="color"
+          className="flex-1 h-9 rounded-lg border border-border cursor-pointer"
+          value={toHex(getStyleProp(selected, 'color') || fallback)}
+          onChange={(e) => {
+            setStyleProp(selected, 'color', e.target.value);
+            update();
+          }}
+        />
+        <button
+          type="button"
+          onClick={() => {
+            setStyleProp(selected, 'color', '');
+            update();
+          }}
+          className="px-3 h-9 text-xs font-medium rounded-lg border border-border bg-bg-subtle hover:border-accent hover:text-accent transition-colors"
+          title="Reset to default"
+        >
+          Clear
+        </button>
+      </div>
+    </Field>
+  );
+}
+
+function TextAlignField({ selected, update }) {
+  return (
+    <Field label="Alignment">
+      <select
+        className={inputClass}
+        value={getStyleProp(selected, 'text-align') || 'left'}
+        onChange={(e) => {
+          setStyleProp(selected, 'text-align', e.target.value);
+          update();
+        }}
+      >
+        <option value="left">Left</option>
+        <option value="center">Center</option>
+        <option value="right">Right</option>
+      </select>
+    </Field>
+  );
+}
+
+/** Everyday typography — always visible in the simple panel (not only Advanced CSS). */
+function TypographyControls({
+  selected,
+  update,
+  showSize = true,
+  showWeight = true,
+  showColor = true,
+  showAlign = false,
+  colorFallback = '#334155',
+}) {
+  return (
+    <>
+      <FontFamilyField selected={selected} update={update} />
+      {showSize && <TextSizeField selected={selected} update={update} />}
+      {showWeight && <FontWeightField selected={selected} update={update} />}
+      {showColor && (
+        <TextColorField selected={selected} update={update} fallback={colorFallback} />
+      )}
+      {showAlign && <TextAlignField selected={selected} update={update} />}
+    </>
+  );
+}
+
+/** All funnel page types — every campaign can edit HOME … ERROR. */
+function getCampaignPageOptions() {
+  return PAGE_TYPES.map((id) => ({
+    id,
+    label: PAGE_TYPE_LABELS[id] || id,
+  }))
+}
+
+function CampaignPageSelect({
+  href,
+  onChange,
+  label = 'Page name',
+  editHref,
+}) {
+  const options = getCampaignPageOptions()
+  const matched = options.find((o) => o.id.toLowerCase() === (href || '').toLowerCase())
+  const value = matched?.id || options[0]?.id || 'OTP'
+
+  return (
+    <div className="space-y-1.5">
+      <Field label={label}>
+        <select
+          className={inputClass}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+        >
+          {options.map((page) => (
+            <option key={page.id} value={page.id}>
+              {page.label}
+            </option>
+          ))}
+        </select>
+      </Field>
+      {editHref && (
+        <a
+          href={editHref}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-1 text-[11px] font-medium text-indigo-600 hover:text-indigo-700 hover:underline"
+        >
+          <Pencil className="w-3 h-3" />
+          Edit {PAGE_TYPE_LABELS[value] || value} page
+        </a>
+      )}
+    </div>
+  )
+}
+
+/** True for OTP system controls — pack buttons can still set When clicked. */
+function isLockedSystemAction(attrs = {}) {
+  if (attrs['data-otp-action'] || attrs['data-otp-field'] || attrs['data-otp-slot']) return true
+  if (attrs['data-flow-pack-picker'] !== undefined) return true
+  return false
+}
+
+function getClickActionType(attrs = {}) {
+  if (attrs['data-action'] === 'CHAIN' || attrs['data-actions']) return 'chain'
+  if (attrs['data-action'] === 'SUBSCRIBE_ROUTE') return 'subscribeRoute'
+  const href = attrs.href
+  if (href === undefined || href === null || href === '') {
+    if (attrs['data-action']) return 'flow'
+    return 'none'
+  }
+  // Prefer real navigation targets over a leftover SUBSCRIBE (save heal used to re-add it)
+  if (href.startsWith('http://') || href.startsWith('https://') || href.startsWith('mailto:') || href.startsWith('tel:')) {
+    return 'external'
+  }
+  if (href.startsWith('#') && href !== '#') return 'anchor'
+  // Signup / Confirm system CTAs — before bare "#" which would look like "scroll"
+  if (attrs['data-action'] === 'SUBSCRIBE' || attrs['data-action'] === 'CONFIRM') return 'flow'
+  if (href.startsWith('#')) return 'anchor'
+  return 'page'
+}
+
+function SectionAnchorSelect({
+  editor,
+  value,
+  onChange,
+}) {
+  return (
+    <Field label="Scroll to section">
+      <select
+        className={inputClass}
+        value={value || ''}
+        onChange={(e) => onChange(e.target.value)}
+      >
+        <option value="">Select a section...</option>
+        {(() => {
+          const sections = []
+          const wrapper = editor.getWrapper()
+          if (wrapper) {
+            const walk = (cmp) => {
+              const tag = (cmp.get('tagName') || '').toLowerCase()
+              const SECTION_TAGS = new Set([
+                'section',
+                'header',
+                'footer',
+                'nav',
+                'main',
+                'article',
+              ])
+              const isSection =
+                SECTION_TAGS.has(tag) ||
+                cmp.getAttributes()?.['data-tc-type'] === 'section'
+              if (isSection && tag !== 'header' && tag !== 'footer') {
+                const id = cmp.getAttributes()?.id || cmp.getId()
+                const label = cmp.get('sectionLabel') || id || 'Untitled Section'
+                sections.push({ id, label })
+              }
+              cmp.components().forEach(walk)
+            }
+            walk(wrapper)
+          }
+          const seen = new Set()
+          return sections
+            .filter((s) => {
+              if (seen.has(s.id)) return false
+              seen.add(s.id)
+              return true
+            })
+            .map((sec) => (
+              <option key={sec.id} value={sec.id}>
+                {sec.label} (#{sec.id})
+              </option>
+            ))
+        })()}
+      </select>
+    </Field>
+  )
+}
+
+/** Shared “When clicked” config for buttons and hotspots (5 options, including Priority). */
+function ClickActionEditor({
+  selected,
+  editor,
+  update,
+}) {
+  const [chainOpenSignal, setChainOpenSignal] = useState(0)
+  const [subscribeOpenSignal, setSubscribeOpenSignal] = useState(0)
+  const { campaignId, countryCode, operatorCode, funnelPageType } = useEditor()
+  const campaign = useStore((s) => s.campaign)
+  const attrs = selected.getAttributes() || {}
+  const href = attrs.href || ''
+  const type = getClickActionType(attrs)
+  const [subscribeApiTemplate, setSubscribeApiTemplate] = useState('')
+  const [packOptions, setPackOptions] = useState(CLASSIC_PACK_OPTIONS)
+
+  useEffect(() => {
+    if (!campaignId) return undefined
+    let cancelled = false
+    getCampaignApiConfig(campaignId)
+      .then((cfg) => {
+        if (cancelled) return
+        setSubscribeApiTemplate(String(cfg?.subscribeApi || ''))
+        setPackOptions(
+          editorPackOptions(cfg?.dcbConfigJson || cfg?.dcb_config_json, {
+            universeDcb: String(campaign?.verificationMode || '').toUpperCase() === 'UNIVERSE_DCB',
+          })
+        )
+      })
+      .catch(() => {
+        if (cancelled) return
+        setSubscribeApiTemplate('')
+        setPackOptions(CLASSIC_PACK_OPTIONS)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [campaignId, campaign?.verificationMode])
+
+  const packId = String(attrs['data-pack'] || '').toLowerCase()
+  const serviceIdAttr = String(attrs['data-service-id'] || '')
+  const subServiceIdAttr = String(attrs['data-sub-service-id'] || '')
+  const finalSubscribeUrl = useMemo(() => {
+    if (!packId) return ''
+    return previewSubscribeUrl(subscribeApiTemplate, {
+      pack: packId,
+      serviceId: sanitizeSubscribeParam(serviceIdAttr) || campaign?.serviceId || '',
+      subServiceId: sanitizeSubscribeParam(subServiceIdAttr),
+    })
+  }, [packId, serviceIdAttr, subServiceIdAttr, subscribeApiTemplate, campaign?.serviceId])
+
+  const pageEditHref = (() => {
+    if (type !== 'page' || !campaignId) return null
+    const options = getCampaignPageOptions()
+    const matched = options.find((o) => o.id.toLowerCase() === (href || '').toLowerCase())
+    const pageId = matched?.id || options[0]?.id || 'OTP'
+    // Don't offer edit for the page currently open in the canvas
+    if (String(pageId).toUpperCase() === String(funnelPageType || '').toUpperCase()) {
+      return null
+    }
+    return campaignEditPath(countryCode, operatorCode, campaignId, pageId)
+  })()
+
+  const setClickType = (next) => {
+    if (next === 'none') {
+      selected.removeAttributes('data-action')
+      selected.removeAttributes('data-actions')
+      selected.removeAttributes('data-subscribe-routes')
+      selected.removeAttributes('href')
+      selected.removeAttributes('target')
+      const currentStyle = selected.getStyle() || {}
+      if (currentStyle.cursor === 'pointer') {
+        const nextStyle = { ...currentStyle }
+        delete nextStyle.cursor
+        selected.setStyle(nextStyle)
+      }
+    } else if (next === 'chain') {
+      selected.removeAttributes('data-subscribe-routes')
+      selected.addAttributes({
+        'data-action': 'CHAIN',
+        'data-actions': JSON.stringify([
+          {
+            type: 'api',
+            url: '',
+            rules: [
+              { key: 'currentStatus', value: 'active', go: 'page', page: 'THANKYOU', url: '' },
+              { key: 'currentStatus', value: 'parking', go: 'page', page: 'LOW_BALANCE', url: '' },
+              { key: 'currentStatus', value: 'pending', go: 'page', page: 'INPROGRESS', url: '' },
+            ],
+            missAction: 'page',
+            missPage: 'CONFIRM',
+            missUrl: '',
+            failAction: 'page',
+            failPage: 'ERROR',
+            failUrl: '',
+          },
+        ]),
+        href: '#',
+      })
+      setStyleProp(selected, 'cursor', 'pointer')
+      setChainOpenSignal((n) => n + 1)
+    } else if (next === 'subscribeRoute') {
+      selected.removeAttributes('data-actions')
+      selected.addAttributes({
+        'data-action': 'SUBSCRIBE_ROUTE',
+        'data-subscribe-routes': JSON.stringify(DEFAULT_SUBSCRIBE_ROUTES),
+        href: '#',
+      })
+      selected.removeAttributes('target')
+      setStyleProp(selected, 'cursor', 'pointer')
+      setSubscribeOpenSignal((n) => n + 1)
+    } else if (next === 'flow') {
+      selected.removeAttributes('data-actions')
+      selected.removeAttributes('data-subscribe-routes')
+      // Keep Confirm billing on CONFIRM pages; HOME / others use Subscribe API
+      const prev = String(attrs['data-action'] || '').toUpperCase()
+      const page = String(funnelPageType || '').toUpperCase()
+      const flowAction =
+        prev === 'CONFIRM' || page === 'CONFIRM' ? 'CONFIRM' : 'SUBSCRIBE'
+      selected.addAttributes({ 'data-action': flowAction, href: '#' })
+      selected.removeAttributes('target')
+      setStyleProp(selected, 'cursor', 'pointer')
+    } else if (next === 'anchor') {
+      selected.removeAttributes('data-action')
+      selected.removeAttributes('data-actions')
+      selected.removeAttributes('data-subscribe-routes')
+      const anchors = listSectionAnchorsOnPage(editor, selected)
+      selected.addAttributes({ href: anchors.length > 0 ? `#${anchors[0]}` : '#' })
+      setStyleProp(selected, 'cursor', 'pointer')
+    } else if (next === 'page') {
+      selected.removeAttributes('data-action')
+      selected.removeAttributes('data-actions')
+      selected.removeAttributes('data-subscribe-routes')
+      selected.addAttributes({ href: 'OTP' })
+      setStyleProp(selected, 'cursor', 'pointer')
+    } else {
+      selected.removeAttributes('data-action')
+      selected.removeAttributes('data-actions')
+      selected.removeAttributes('data-subscribe-routes')
+      selected.addAttributes({ href: 'https://' })
+      setStyleProp(selected, 'cursor', 'pointer')
+    }
+    update()
+  }
+
+  return (
+    <>
+      <Field label="When clicked">
+        <select
+          className={inputClass}
+          value={type}
+          onChange={(e) => setClickType(e.target.value)}
+        >
+          <option value="none">None (No link / action)</option>
+          <option value="flow">
+            {String(funnelPageType || '').toUpperCase() === 'CONFIRM' ||
+            attrs['data-action'] === 'CONFIRM'
+              ? 'Continue signup flow (Confirm API)'
+              : 'Continue signup flow (OTP / Confirm path)'}
+          </option>
+          <option value="subscribeRoute">Hit Subscribe API + choose pages</option>
+          <option value="anchor">Scroll to a section</option>
+          <option value="page">Go to another page</option>
+          <option value="external">Open a website</option>
+          <option value="chain">Try checks in order</option>
+        </select>
+      </Field>
+
+      {type === 'chain' && (
+        <PriorityChainTrigger
+          selected={selected}
+          editor={editor}
+          update={update}
+          openSignal={chainOpenSignal}
+        />
+      )}
+
+      {type === 'subscribeRoute' && (
+        <SubscribeRouteTrigger
+          selected={selected}
+          update={update}
+          openSignal={subscribeOpenSignal}
+        />
+      )}
+
+      {type === 'flow' && (
+        <p className="text-[11px] text-fg-muted leading-relaxed -mt-1">
+          {attrs['data-action'] === 'CONFIRM' ||
+          String(funnelPageType || '').toUpperCase() === 'CONFIRM' ? (
+            <>
+              Hits this campaign&apos;s Confirm / billing API, then opens Thank you or the
+              outcome page from Flow Builder. For single-page subscribe with custom
+              destinations, use &quot;Hit Subscribe API + choose pages&quot;.
+            </>
+          ) : (
+            <>
+              Follows Subscription flow (OTP / Confirm path from campaign settings) — does
+              not pick Thank you vs OTP on this button. For that, use &quot;Hit Subscribe API +
+              choose pages&quot;. Add a pack below to subscribe immediately from this button.
+            </>
+          )}
+        </p>
+      )}
+
+      {(type === 'flow' || type === 'subscribeRoute') && (
+        <Field label="Pack (optional)">
+          <select
+            className={inputClass}
+            value={String(attrs['data-pack'] || '').toLowerCase()}
+            onChange={(e) => {
+              const pack = e.target.value
+              if (!pack) {
+                selected.removeAttributes('data-pack')
+                selected.removeAttributes('data-purchase-type-id')
+              } else {
+                const mapping = packOptions.find(
+                  (item) => String(item.packKey || '').toLowerCase() === pack
+                )
+                const nextAttrs = { 'data-pack': pack }
+                if (mapping?.purchaseTypeId) {
+                  nextAttrs['data-purchase-type-id'] = String(mapping.purchaseTypeId)
+                } else {
+                  selected.removeAttributes('data-purchase-type-id')
+                }
+                selected.addAttributes(nextAttrs)
+              }
+              update()
+            }}
+          >
+            <option value="">None — continue flow / picker</option>
+            {(() => {
+              const currentPack = String(attrs['data-pack'] || '').toLowerCase()
+              const options = [...packOptions]
+              if (
+                currentPack &&
+                !options.some((item) => String(item.packKey || '').toLowerCase() === currentPack)
+              ) {
+                options.push({
+                  packKey: currentPack,
+                  label: currentPack,
+                  purchaseTypeId: attrs['data-purchase-type-id'] || '',
+                })
+              }
+              return options.map((item) => (
+                <option key={item.packKey} value={String(item.packKey).toLowerCase()}>
+                  {item.label || item.packKey}
+                  {item.purchaseTypeId ? ` (${item.purchaseTypeId})` : ''}
+                </option>
+              ))
+            })()}
+          </select>
+          <p className="text-[11px] text-fg-muted mt-1 leading-snug">
+            Packs come from Universe DCB mappings in API settings. Choosing one sets this
+            button&apos;s pack and purchaseTypeId.
+          </p>
+        </Field>
+      )}
+
+      {(type === 'flow' || type === 'subscribeRoute') &&
+        hasMixedConversionTriggers({
+          html:
+            (attrs['data-pack'] && 'data-pack=') ||
+            (typeof editor?.getHtml === 'function' ? editor.getHtml() : ''),
+          postbackRegisterAt: campaign?.postbackRegisterAt,
+        }) && (
+          <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-2.5 py-2 leading-snug">
+            This campaign also queues a vendor postback on OTP verify. Pack buttons
+            and OTP verify are two conversion kinds — both can upsert the same MSISDN
+            row. Turn off OTP postback in Campaign Detail if you only want pack-click
+            pending.
+          </p>
+        )}
+
+      {(type === 'flow' || type === 'subscribeRoute') && attrs['data-pack'] && (
+        <>
+          <Field label="Service ID (optional)">
+            <input
+              className={inputClass}
+              placeholder={campaign?.serviceId || 'e.g. 100'}
+              value={sanitizeSubscribeParam(attrs['data-service-id'] || '')}
+              onChange={(e) => {
+                const v = sanitizeSubscribeParam(e.target.value)
+                if (!v) selected.removeAttributes('data-service-id')
+                else selected.addAttributes({ 'data-service-id': v })
+                selected.removeAttributes('data-subscribe-url')
+                update()
+              }}
+            />
+            <p className="text-[11px] text-fg-muted mt-1 leading-snug">
+              Operator value only (e.g. 100). Do not type{' '}
+              <code className="font-mono">{'{{serviceId}}'}</code>. Leave empty to use
+              the campaign service ID.
+            </p>
+          </Field>
+          <Field label="Sub-service ID (optional)">
+            <input
+              className={inputClass}
+              placeholder={packId ? defaultSubServiceId(packId) : 'e.g. HMonthly'}
+              value={sanitizeSubscribeParam(attrs['data-sub-service-id'] || '')}
+              onChange={(e) => {
+                const v = sanitizeSubscribeParam(e.target.value)
+                if (!v) selected.removeAttributes('data-sub-service-id')
+                else selected.addAttributes({ 'data-sub-service-id': v })
+                selected.removeAttributes('data-subscribe-url')
+                update()
+              }}
+            />
+            <p className="text-[11px] text-fg-muted mt-1 leading-snug">
+              Operator value only (e.g.{' '}
+              {packId ? defaultSubServiceId(packId) : 'HDaily / HWeekly / HMonthly'}). Do
+              not type <code className="font-mono">{'{{subServiceId}}'}</code>. Leave
+              empty to use the pack default.
+            </p>
+          </Field>
+          <div className="rounded-md border border-border bg-bg-subtle px-2.5 py-2 space-y-1">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-fg-muted">
+              Final subscribe URL
+            </p>
+            {subscribeApiTemplate ? (
+              <>
+                <p className="text-[11px] font-mono text-fg break-all leading-snug">
+                  {finalSubscribeUrl}
+                </p>
+                {!templateHasSubscribeSlots(subscribeApiTemplate) && (
+                  <p className="text-[11px] text-fg-muted leading-snug">
+                    Pack / service / sub-service will not change this URL until you add{' '}
+                    <code className="font-mono">{'{{pack}}'}</code>,{' '}
+                    <code className="font-mono">{'{{serviceId}}'}</code>, or{' '}
+                    <code className="font-mono">{'{{subServiceId}}'}</code> in Campaign
+                    API → Subscribe URL. <code className="font-mono">{'{{msisdn}}'}</code>{' '}
+                    is filled when the user clicks.
+                  </p>
+                )}
+              </>
+            ) : (
+              <p className="text-[11px] text-amber-800 leading-snug">
+                Set the campaign Subscribe URL in API config first. This preview is built
+                from that template + pack / service ID / sub-service ID. MSISDN is filled
+                at runtime.
+              </p>
+            )}
+          </div>
+          <label className="flex items-start gap-2 text-xs text-fg">
+            <input
+              type="checkbox"
+              className="mt-0.5"
+              checked={attrs['data-postback'] !== '0'}
+              onChange={(e) => {
+                if (e.target.checked) {
+                  selected.removeAttributes('data-postback')
+                } else {
+                  selected.addAttributes({ 'data-postback': '0' })
+                }
+                update()
+              }}
+            />
+            <span>
+              Queue vendor postback on this click
+              <span className="block text-[11px] text-fg-muted mt-0.5 leading-snug">
+                Default on for pack buttons. Fire still happens when the operator hits
+                callback. Uncheck for non-conversion CTAs.
+              </span>
+            </span>
+          </label>
+        </>
+      )}
+
+      {type === 'anchor' && (
+        <SectionAnchorSelect
+          editor={editor}
+          value={href.replace(/^#/, '')}
+          onChange={(id) => {
+            selected.addAttributes({ href: `#${id}` })
+            update()
+          }}
+        />
+      )}
+
+      {type === 'page' && (
+        <CampaignPageSelect
+          href={href}
+          editor={editor}
+          editHref={pageEditHref}
+          onChange={(pageId) => {
+            selected.addAttributes({ href: pageId })
+            update()
+          }}
+        />
+      )}
+
+      {type === 'external' && (
+        <Field label="Website address (URL)">
+          <input
+            className={inputClass}
+            placeholder="e.g. https://google.com"
+            value={href}
+            onChange={(e) => {
+              selected.addAttributes({ href: e.target.value })
+              update()
+            }}
+          />
+        </Field>
+      )}
+    </>
+  )
+}
+
+
+function InputFieldControls({ selected, editor, update }) {
+  const attrs = selected?.getAttributes?.() || {};
+  const restriction = getInputRestriction(attrs);
+  const placeholder = attrs.placeholder || '';
+  const minLength = attrs['data-min-length'] ?? attrs.minlength ?? '';
+  const maxLength = attrs['data-max-length'] ?? attrs.maxlength ?? '';
+
+  const textAlign = getStyleProp(selected, 'text-align') || '';
+  const dir = attrs.dir || getStyleProp(selected, 'direction') || '';
+
+  const handleRestrictionChange = (newRestriction) => {
+    if (newRestriction === 'any') {
+      selected.removeAttributes('data-input-restriction');
+    } else {
+      selected.addAttributes({ 'data-input-restriction': newRestriction });
+    }
+
+    if (newRestriction === 'numbers') {
+      selected.addAttributes({ inputmode: 'numeric' });
+      if (attrs.type !== 'tel') {
+        selected.addAttributes({ type: 'tel' });
+      }
+    } else if (newRestriction === 'email') {
+      selected.addAttributes({ type: 'email' });
+      selected.removeAttributes('inputmode');
+    } else {
+      if (attrs.type === 'tel' || attrs.type === 'number') {
+        selected.addAttributes({ type: 'text' });
+      }
+      selected.removeAttributes('inputmode');
+    }
+    update();
+  };
+
+  const handleMinLengthChange = (val) => {
+    const clean = val.replace(/\D/g, '');
+    if (clean === '') {
+      selected.removeAttributes('data-min-length');
+      selected.removeAttributes('minlength');
+    } else {
+      selected.addAttributes({
+        'data-min-length': clean,
+        minlength: clean,
+      });
+    }
+    update();
+  };
+
+  const handleMaxLengthChange = (val) => {
+    const clean = val.replace(/\D/g, '');
+    if (clean === '') {
+      selected.removeAttributes('data-max-length');
+      selected.removeAttributes('maxlength');
+    } else {
+      selected.addAttributes({
+        'data-max-length': clean,
+        maxlength: clean,
+      });
+    }
+    update();
+  };
+
+  const handlePlaceholderChange = (val) => {
+    selected.addAttributes({ placeholder: val });
+    update();
+  };
+
+  const handleAlignChange = (align) => {
+    setStyleProp(selected, 'text-align', align);
+    update();
+  };
+
+  const handleDirChange = (newDir) => {
+    if (!newDir) {
+      selected.removeAttributes('dir');
+      setStyleProp(selected, 'direction', '');
+    } else {
+      selected.addAttributes({ dir: newDir });
+      setStyleProp(selected, 'direction', newDir);
+    }
+    update();
+  };
+
+  const isPhone =
+    attrs['data-otp-field'] === 'phone' ||
+    attrs['data-dcb-field'] === 'phone' ||
+    attrs['data-field'] === 'phone' ||
+    attrs.type === 'tel';
+  const isOtp =
+    attrs['data-otp-field'] === 'otp' ||
+    attrs['data-dcb-field'] === 'pin' ||
+    attrs['data-field'] === 'otp' ||
+    attrs['data-field'] === 'pin';
+
+  const countryCode = attrs['data-country-code'] || attrs['data-phone-prefix'] || '';
+  const parent = selected?.parent?.();
+  const prefixBadgeSelector =
+    '[data-country-code], [data-phone-prefix], .wjo-country-code, .phone-prefix-badge, .country-code-prefix, .bf-country-prefix'
+  const existingBadge = parent
+    ? parent.find?.(prefixBadgeSelector)?.[0]
+    : null;
+  const [showBadge, setShowBadge] = useState(() => Boolean(existingBadge));
+
+  useEffect(() => {
+    setShowBadge(Boolean(existingBadge));
+  }, [selected, existingBadge]);
+
+  const syncBadgeInCanvas = (code) => {
+    if (!parent) return;
+    const badge = parent.find?.(prefixBadgeSelector)?.[0];
+    if (badge) {
+      badge.set('content', code);
+      badge.addAttributes({ 'data-country-code': code });
+    } else {
+      const idx = selected.index();
+      parent.components().add(
+        {
+          tagName: 'span',
+          classes: ['wjo-country-code', 'phone-prefix-badge'],
+          attributes: { 'data-country-code': code },
+          content: code,
+          style: {
+            background: '#f0f4ff',
+            color: '#4f46e5',
+            'font-weight': '700',
+            'font-size': '15px',
+            padding: '0 12px',
+            height: '100%',
+            display: 'flex',
+            'align-items': 'center',
+            'justify-content': 'center',
+            'border-right': '1.5px solid #dce0ee',
+            'user-select': 'none',
+            'flex-shrink': '0',
+          },
+        },
+        { at: idx }
+      );
+    }
+  };
+
+  const removeBadgeFromCanvas = () => {
+    if (!parent) return;
+    const badges = parent.find?.(prefixBadgeSelector) || [];
+    badges.forEach((b) => b.remove());
+  };
+
+  const handleCountryCodeChange = (val) => {
+    const raw = String(val || '').trim();
+    if (!raw) {
+      selected.removeAttributes('data-country-code');
+      selected.removeAttributes('data-phone-prefix');
+      removeBadgeFromCanvas();
+    } else {
+      selected.addAttributes({ 'data-country-code': raw });
+      if (showBadge) {
+        syncBadgeInCanvas(raw);
+      }
+    }
+    update();
+  };
+
+  const handleBadgeToggle = (enable) => {
+    setShowBadge(enable);
+    if (!enable) {
+      removeBadgeFromCanvas();
+    } else if (countryCode) {
+      syncBadgeInCanvas(countryCode);
+    }
+    update();
+  };
+
+  return (
+    <>
+      <div className="rounded-xl border border-indigo-100 bg-indigo-50/50 p-2.5 flex items-center justify-between">
+        <span className="text-xs font-bold text-indigo-900 flex items-center gap-1.5">
+          {isPhone ? '📱 Phone / Mobile Field' : isOtp ? '🔑 OTP / PIN Field' : '📝 Input Field'}
+        </span>
+        <span className="text-[10px] font-semibold text-indigo-600 bg-indigo-100/70 px-2 py-0.5 rounded-full uppercase">
+          {restriction}
+        </span>
+      </div>
+
+      <Field label="Placeholder Text">
+        <input
+          type="text"
+          className={inputClass}
+          value={placeholder}
+          placeholder="e.g. Enter phone number..."
+          onChange={(e) => handlePlaceholderChange(e.target.value)}
+        />
+      </Field>
+
+      {isPhone && (
+        <div className="space-y-2 rounded-xl border border-indigo-100 bg-indigo-50/40 p-3">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold text-indigo-950 flex items-center gap-1.5">
+              🌐 Country Code (Prefix)
+            </span>
+            {countryCode ? (
+              <span className="text-[11px] font-bold text-indigo-700 bg-indigo-100 px-2 py-0.5 rounded-full font-mono">
+                {countryCode}
+              </span>
+            ) : (
+              <span className="text-[10px] font-medium text-gray-500 bg-gray-100 px-2 py-0.5 rounded-full">
+                None
+              </span>
+            )}
+          </div>
+
+          <div>
+            <label className="text-[10px] font-medium text-gray-500 mb-1 block">
+              Dial Code (e.g. 91 or +91)
+            </label>
+            <input
+              type="text"
+              className={inputClass}
+              value={countryCode}
+              placeholder="e.g. 91 or +91"
+              onChange={(e) => handleCountryCodeChange(e.target.value)}
+            />
+            <p className="text-[11px] text-fg-muted pt-1">
+              Prepends to mobile number when sending OTP (e.g. 791234567 → {countryCode || '91'}791234567).
+            </p>
+          </div>
+
+          <div>
+            <label className="text-[10px] font-medium text-gray-500 mb-1 block">Quick Presets</label>
+            <div className="flex flex-wrap gap-1">
+              {[
+                { code: '+91', label: '🇮🇳 +91' },
+                { code: '+962', label: '🇯🇴 +962' },
+                { code: '+966', label: '🇸🇦 +966' },
+                { code: '+971', label: '🇦🇪 +971' },
+                { code: '+226', label: '🇧🇫 +226' },
+                { code: '+249', label: '🇸🇩 +249' },
+                { code: '+965', label: '🇰🇼 +965' },
+              ].map((p) => (
+                <button
+                  key={p.code}
+                  type="button"
+                  onClick={() => handleCountryCodeChange(p.code)}
+                  className={`text-[11px] px-2 py-0.5 rounded-md font-medium transition-colors border ${
+                    countryCode === p.code
+                      ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm'
+                      : 'bg-white text-fg-muted hover:text-fg hover:bg-gray-50 border-gray-200'
+                  }`}
+                >
+                  {p.label}
+                </button>
+              ))}
+              {countryCode && (
+                <button
+                  type="button"
+                  onClick={() => handleCountryCodeChange('')}
+                  className="text-[11px] px-2 py-0.5 rounded-md font-medium text-rose-600 bg-rose-50 hover:bg-rose-100 border border-rose-200 transition-colors"
+                >
+                  ✕ Clear
+                </button>
+              )}
+            </div>
+          </div>
+
+          <label className="flex items-center gap-2 pt-1.5 cursor-pointer select-none border-t border-indigo-100/60 mt-1">
+            <input
+              type="checkbox"
+              checked={showBadge}
+              onChange={(e) => handleBadgeToggle(e.target.checked)}
+              className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 h-3.5 w-3.5"
+            />
+            <span className="text-[11.5px] font-medium text-gray-700">
+              Show visual badge on card ({countryCode || '+91'} | )
+            </span>
+          </label>
+        </div>
+      )}
+
+      <Field label="Input Restriction (Allowed Characters)">
+        <select
+          className={inputClass}
+          value={restriction}
+          onChange={(e) => handleRestrictionChange(e.target.value)}
+        >
+          <option value="numbers">Numbers Only (0–9)</option>
+          <option value="text">Text Only (Letters &amp; spaces)</option>
+          <option value="alphanumeric">Alphanumeric (Letters &amp; Numbers)</option>
+          <option value="email">Email Address</option>
+          <option value="any">Any Characters (No Restriction)</option>
+        </select>
+        <p className="text-[11px] text-fg-muted pt-0.5">
+          {restriction === 'numbers' && 'Only numeric digits (0–9) are allowed; blocks letters and symbols.'}
+          {restriction === 'text' && 'Only alphabetic letters and spaces are allowed; blocks numbers and symbols.'}
+          {restriction === 'alphanumeric' && 'Letters and numbers allowed; blocks special symbols.'}
+          {restriction === 'email' && 'Email address format characters.'}
+          {restriction === 'any' && 'Free text entry without character restrictions.'}
+        </p>
+      </Field>
+
+      <div className="space-y-1.5">
+        <span className="text-xs font-medium text-fg-muted">Character Limits (Min / Max)</span>
+        <div className="grid grid-cols-2 gap-2">
+          <div>
+            <label className="text-[10px] font-medium text-gray-500 mb-1 block">Min Limit</label>
+            <input
+              type="text"
+              inputMode="numeric"
+              className={inputClass}
+              value={minLength}
+              placeholder="e.g. 7"
+              onChange={(e) => handleMinLengthChange(e.target.value)}
+            />
+          </div>
+          <div>
+            <label className="text-[10px] font-medium text-gray-500 mb-1 block">Max Limit</label>
+            <input
+              type="text"
+              inputMode="numeric"
+              className={inputClass}
+              value={maxLength}
+              placeholder="e.g. 10"
+              onChange={(e) => handleMaxLengthChange(e.target.value)}
+            />
+          </div>
+        </div>
+        <p className="text-[11px] text-fg-muted pt-0.5">
+          Min limit prevents submitting too few characters; Max limit prevents typing extra characters.
+        </p>
+      </div>
+
+      <div className="space-y-1.5">
+        <span className="text-xs font-medium text-fg-muted">Alignment &amp; Direction</span>
+        <div className="grid grid-cols-2 gap-2">
+          <div>
+            <label className="text-[10px] font-medium text-gray-500 mb-1 block">Text Align</label>
+            <div className="flex rounded-lg border border-border overflow-hidden bg-bg-subtle p-0.5">
+              {['left', 'center', 'right'].map((al) => (
+                <button
+                  key={al}
+                  type="button"
+                  onClick={() => handleAlignChange(al)}
+                  className={`flex-1 py-1 text-xs font-semibold capitalize rounded-md transition-colors ${
+                    textAlign === al
+                      ? 'bg-white text-indigo-600 shadow-sm'
+                      : 'text-fg-muted hover:text-fg'
+                  }`}
+                >
+                  {al}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div>
+            <label className="text-[10px] font-medium text-gray-500 mb-1 block">Direction</label>
+            <div className="flex rounded-lg border border-border overflow-hidden bg-bg-subtle p-0.5">
+              {[
+                { val: 'ltr', label: 'LTR' },
+                { val: 'rtl', label: 'RTL' },
+              ].map(({ val, label }) => (
+                <button
+                  key={val}
+                  type="button"
+                  onClick={() => handleDirChange(val)}
+                  className={`flex-1 py-1 text-xs font-semibold rounded-md transition-colors ${
+                    dir === val
+                      ? 'bg-white text-indigo-600 shadow-sm'
+                      : 'text-fg-muted hover:text-fg'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <TypographyControls selected={selected} update={update} showAlign />
+
+      <Field label="Input Background">
+        <div className="flex gap-2">
+          <input
+            type="color"
+            className="flex-1 h-9 rounded-lg border border-border cursor-pointer"
+            value={toHex(getStyleProp(selected, 'background-color') || getStyleProp(selected, 'background') || '#ffffff')}
+            onChange={(e) => {
+              setStyleProp(selected, 'background-color', e.target.value);
+              update();
+            }}
+          />
+          <button
+            type="button"
+            onClick={() => {
+              setStyleProp(selected, 'background-color', 'transparent');
+              update();
+            }}
+            className="px-3 h-9 text-xs font-medium rounded-lg border border-border bg-bg-subtle hover:border-accent hover:text-accent transition-colors"
+            title="Make transparent"
+          >
+            Clear
+          </button>
+        </div>
+      </Field>
+
+      <StepArrows
+        label="Corner roundness"
+        valueLabel={cornerLabel(parseCornerIndex(getStyleProp(selected, 'border-radius')))}
+        decreaseTitle="Less rounded"
+        increaseTitle="More rounded"
+        onDecrease={() => {
+          const idx = Math.max(0, parseCornerIndex(getStyleProp(selected, 'border-radius')) - 1);
+          setStyleProp(selected, 'border-radius', cornerIndexToCss(idx));
+          update();
+        }}
+        onIncrease={() => {
+          const idx = Math.min(CORNER_STEPS.length - 1, parseCornerIndex(getStyleProp(selected, 'border-radius')) + 1);
+          setStyleProp(selected, 'border-radius', cornerIndexToCss(idx));
+          update();
+        }}
+      />
+
+      <PositionControls selected={selected} update={update} />
+    </>
+  );
+}
+
+const KIND_LABELS = {
+  text: 'Text',
+  button: 'Button',
+  image: 'Photo',
+  section: 'Section',
+  generic: 'Block',
+  link: 'Link',
+  hotspot: 'Clickable Area',
+  input: 'Input Field',
+  none: 'Element',
+};
+
+function getButtonSize(padding) {
+  if (padding === '8px 16px') return 'sm';
+  if (padding === '16px 32px') return 'lg';
+  return 'md';
+}
+
+function PositionControls({
+  selected,
+  update,
+}) {
+  const margin = parseSpacing(getStyleProp(selected, 'margin'));
+  const padding = parseSpacing(getStyleProp(selected, 'padding'));
+
+  return (
+    <div className="space-y-4 pt-2 border-t border-border">
+      <MoveArrows
+        label="Move on page"
+        value={margin}
+        onChange={(v) => {
+          setStyleProp(selected, 'margin', formatSpacing(v));
+          update();
+        }}
+      />
+      <InnerSpaceArrows
+        label="Space inside"
+        value={padding}
+        onChange={(v) => {
+          setStyleProp(selected, 'padding', formatSpacing(v));
+          update();
+        }}
+      />
+    </div>
+  );
+}
+
+export function PropertyPanel() {
+  const { editor, selectionVersion, advancedMode, setAdvancedMode, refreshSelection } = useEditor();
+  const styleHostRef = useRef(null);
+  const traitHostRef = useRef(null);
+  const [anchorError, setAnchorError] = useState(null);
+  const { collapsed, toggleCollapsed } = usePropsCollapsed();
+  const { width: propsWidth, startResize } = usePropsWidth(advancedMode);
+
+  const selected = editor?.getSelected();
+  const kind = editor && selected ? getComponentKind(selected) : 'none';
+  const flowInfo = selected ? getFlowElementInfo((selected.getAttributes?.() || {})) : null;
+
+  const panelStyle = { width: propsWidth };
+
+  const resizeHandle = (
+    <div
+      role="separator"
+      aria-orientation="vertical"
+      aria-label="Resize properties panel"
+      title="Drag to resize"
+      onMouseDown={startResize}
+      className="absolute left-0 top-0 bottom-0 w-1.5 -ml-0.5 cursor-ew-resize z-20 group hover:bg-accent/30 active:bg-accent/50"
+    >
+      <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-1 h-8 rounded-full bg-border group-hover:bg-accent opacity-70" />
+    </div>
+  );
+
+  useLayoutEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setAnchorError(null);
+  }, [selectionVersion]);
+
+  useLayoutEffect(() => {
+    if (!editor || !advancedMode || collapsed) return;
+    const cmp = editor.getSelected();
+    if (!cmp || getComponentKind(cmp) === 'none') return;
+
+    ensureComponentStylable(cmp);
+
+    if (styleHostRef.current) styleHostRef.current.id = 'tc-advanced-styles';
+    if (traitHostRef.current) traitHostRef.current.id = 'tc-advanced-traits';
+
+    mountAdvancedPanels(editor, cmp);
+  }, [editor, advancedMode, selectionVersion, collapsed]);
+
+  if (collapsed) {
+    const label = !editor
+      ? 'Properties'
+      : selected && kind !== 'none'
+      ? KIND_LABELS[kind] || 'Element'
+      : 'Properties';
+    return (
+      <aside className="tc-properties w-12 shrink-0 border-l border-slate-800 bg-[#0e131f] flex flex-col items-center py-4 gap-3 z-20 shadow-lg select-none">
+        <button
+          type="button"
+          onClick={toggleCollapsed}
+          title="Show properties"
+          className="w-9 h-9 flex items-center justify-center rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+        >
+          <PanelRightOpen className="w-4 h-4" />
+        </button>
+        <button
+          type="button"
+          onClick={toggleCollapsed}
+          title="Show properties"
+          className="flex-1 w-full flex items-start justify-center pt-2"
+        >
+          <span
+            className="text-[10px] font-bold uppercase tracking-widest text-slate-400 whitespace-nowrap select-none"
+            style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)' }}
+          >
+            {label}
+          </span>
+        </button>
+        <button
+          type="button"
+          onClick={toggleCollapsed}
+          title="Show properties"
+          className="w-9 h-9 flex items-center justify-center rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+        >
+          <ChevronLeft className="w-4 h-4" />
+        </button>
+      </aside>
+    );
+  }
+
+  if (!editor) {
+    return (
+      <aside
+        className="tc-properties shrink-0 border-l border-slate-200 bg-white p-4 relative shadow-xl z-20 select-none"
+        style={panelStyle}
+      >
+        {resizeHandle}
+        <p className="text-xs font-semibold text-slate-400">Loading inspector...</p>
+      </aside>
+    );
+  }
+
+  const update = () => {
+    refreshSelection();
+  };
+
+  if (!selected || kind === 'none') {
+    return (
+      <aside
+        className="tc-properties shrink-0 border-l border-slate-200 bg-white flex flex-col relative shadow-xl z-20 select-none"
+        style={panelStyle}
+      >
+        {resizeHandle}
+        <div className="p-3.5 border-b border-slate-100 flex items-center justify-between gap-2 bg-slate-50/50">
+          <h2 className="text-xs font-bold text-slate-800 uppercase tracking-wider">Inspector</h2>
+          <button
+            type="button"
+            onClick={toggleCollapsed}
+            title="Hide properties"
+            className="p-1 rounded-lg text-slate-400 hover:bg-slate-200/60 hover:text-slate-700 transition-colors"
+          >
+            <PanelRightClose className="w-4 h-4" />
+          </button>
+        </div>
+        <div className="flex-1 flex flex-col items-center justify-center p-6 text-center">
+          <div className="w-12 h-12 rounded-2xl bg-purple-50 text-purple-600 flex items-center justify-center mb-3">
+            <Pencil className="w-5 h-5" />
+          </div>
+          <p className="text-xs font-semibold text-slate-700">No element selected</p>
+          <p className="text-[11px] text-slate-400 mt-1 max-w-[200px]">
+            Click any section, text, or button on the artboard to inspect and tweak styling.
+          </p>
+        </div>
+      </aside>
+    );
+  }
+
+  return (
+    <aside
+      className="tc-properties shrink-0 border-l border-border bg-bg-elevated flex flex-col overflow-hidden relative"
+      style={panelStyle}
+    >
+      {resizeHandle}
+      <div className="p-3 border-b border-border flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <h2 className="text-sm font-semibold text-fg truncate">{KIND_LABELS[kind] || 'Element'}</h2>
+          <p className="text-xs text-fg-muted mt-0.5 leading-snug">Change how this looks</p>
+        </div>
+        <div className="flex items-center gap-0.5 shrink-0">
+          <button
+            type="button"
+            title="Duplicate"
+            onClick={() => editor.runCommand('tc-duplicate')}
+            className="px-2 py-1 rounded-md text-fg-muted hover:bg-bg-subtle hover:text-fg text-[11px] font-medium"
+          >
+            Duplicate
+          </button>
+          <button
+            type="button"
+            title="Delete"
+            onClick={() => editor.runCommand('tc-delete')}
+            className="px-2 py-1 rounded-md text-danger hover:bg-danger-muted text-[11px] font-medium"
+          >
+            Delete
+          </button>
+          <button
+            type="button"
+            onClick={toggleCollapsed}
+            title="Hide properties"
+            className="p-1.5 rounded-md text-fg-muted hover:bg-bg-subtle hover:text-fg transition-colors"
+          >
+            <ChevronRight className="w-4 h-4" />
+          </button>
+        </div>
+      </div>
+
+      <div className="flex-1 overflow-y-auto p-3 space-y-3.5">
+        {flowInfo && (
+          <div className="rounded-lg border border-warning/40 bg-warning-muted/40 p-3 space-y-1">
+            <p className="text-xs font-semibold text-fg flex items-center gap-1.5">
+              <span className="inline-block w-2 h-2 rounded-full bg-warning" />
+              {flowInfo.label}
+            </p>
+            <p className="text-[11px] text-fg-muted leading-relaxed">{flowInfo.description}</p>
+          </div>
+        )}
+
+        {kind === 'input' && (
+          <InputFieldControls selected={selected} editor={editor} update={update} />
+        )}
+
+        {kind === 'text' && (
+          <>
+            <Field label="What it says">
+              <textarea
+                className={`${inputClass} min-h-[80px] resize-y`}
+                value={getTextContent(selected)}
+                placeholder="Add your text here..."
+                onChange={(e) => {
+                  setTextContent(selected, e.target.value, editor);
+                  update();
+                }}
+              />
+              <p className="text-xs text-fg-muted pt-0.5">Tip: double-click text on the page to edit it directly.</p>
+            </Field>
+            <ClickActionEditor selected={selected} editor={editor} update={update} />
+            <TypographyControls selected={selected} update={update} showAlign />
+            <PositionControls selected={selected} update={update} />
+          </>
+        )}
+
+        {kind === 'button' && (
+          <>
+            <Field label="Button label">
+              <input
+                className={inputClass}
+                value={getLinkText(selected)}
+                onChange={(e) => {
+                  setLinkText(selected, e.target.value, editor);
+                  update();
+                  try {
+                    editor?.Canvas?.refresh?.();
+                  } catch (_) {
+                    /* noop */
+                  }
+                }}
+              />
+            </Field>
+            {!isLockedSystemAction(selected.getAttributes() || {}) && (
+              <ClickActionEditor selected={selected} editor={editor} update={update} />
+            )}
+            <TypographyControls
+              selected={selected}
+              update={update}
+              showAlign
+              colorFallback="#ffffff"
+            />
+            <Field label="Button color">
+              <div className="flex gap-2">
+                <input
+                  type="color"
+                  className="flex-1 h-9 rounded-lg border border-border cursor-pointer"
+                  value={toHex(getStyleProp(selected, 'background-color') || getStyleProp(selected, 'background') || '#2563eb')}
+                  onChange={(e) => {
+                    setStyleProp(selected, 'background-color', e.target.value);
+                    update();
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    setStyleProp(selected, 'background-color', 'transparent');
+                    update();
+                  }}
+                  className="px-3 h-9 text-xs font-medium rounded-lg border border-border bg-bg-subtle hover:border-accent hover:text-accent transition-colors"
+                  title="Make transparent"
+                >
+                  Clear
+                </button>
+              </div>
+            </Field>
+            <StepArrows
+              label="Corner roundness"
+              valueLabel={cornerLabel(parseCornerIndex(getStyleProp(selected, 'border-radius')))}
+              decreaseTitle="Less rounded"
+              increaseTitle="More rounded"
+              onDecrease={() => {
+                const idx = Math.max(0, parseCornerIndex(getStyleProp(selected, 'border-radius')) - 1);
+                setStyleProp(selected, 'border-radius', cornerIndexToCss(idx));
+                update();
+              }}
+              onIncrease={() => {
+                const idx = Math.min(CORNER_STEPS.length - 1, parseCornerIndex(getStyleProp(selected, 'border-radius')) + 1);
+                setStyleProp(selected, 'border-radius', cornerIndexToCss(idx));
+                update();
+              }}
+            />
+            <Field label="Button size">
+              <select
+                className={inputClass}
+                value={getButtonSize(getStyleProp(selected, 'padding'))}
+                onChange={(e) => {
+                  const map = {
+                    sm: '8px 16px',
+                    md: '12px 24px',
+                    lg: '16px 32px',
+                  };
+                  setStyleProp(selected, 'padding', map[e.target.value] || map.md);
+                  update();
+                }}
+              >
+                <option value="sm">Small</option>
+                <option value="md">Medium</option>
+                <option value="lg">Large</option>
+              </select>
+            </Field>
+            <div className="flex gap-2">
+              <Field label="Width">
+                <input
+                  className={inputClass}
+                  placeholder="e.g. 100% or 220px"
+                  value={getStyleProp(selected, 'width') || ''}
+                  onChange={(e) => {
+                    const val = e.target.value.trim();
+                    const next = { ...selected.getStyle() };
+                    const full = !val || val === '100%' || val === 'auto';
+                    if (full) {
+                      next.width = '100%';
+                      next['min-width'] = '0';
+                      next['max-width'] = '100%';
+                      next.display = 'inline-flex';
+                      next['align-self'] = 'stretch';
+                    } else {
+                      next.width = val;
+                      next['max-width'] = '100%';
+                      // Floor only — matching width would block further canvas shrink.
+                      next['min-width'] = `${MIN_BTN_WIDTH}px`;
+                      next.display = 'inline-flex';
+                      next['align-self'] = 'center';
+                      next['flex-shrink'] = '0';
+                    }
+                    selected.setStyle(next);
+                    update();
+                    try {
+                      editor?.Canvas?.refresh?.();
+                    } catch (_) {
+                      /* noop */
+                    }
+                  }}
+                />
+              </Field>
+              <Field label="Min height">
+                <input
+                  className={inputClass}
+                  placeholder="e.g. 44px"
+                  value={getStyleProp(selected, 'min-height') || getStyleProp(selected, 'height') || ''}
+                  onChange={(e) => {
+                    const val = e.target.value.trim();
+                    const next = { ...selected.getStyle() };
+                    if (val) {
+                      next['min-height'] = val;
+                      delete next.height;
+                    } else {
+                      delete next['min-height'];
+                    }
+                    selected.setStyle(next);
+                    update();
+                    try {
+                      editor?.Canvas?.refresh?.();
+                    } catch (_) {
+                      /* noop */
+                    }
+                  }}
+                />
+              </Field>
+            </div>
+            <p className="text-[11px] text-fg-subtle -mt-2 leading-relaxed">
+              Drag corner or left/right handles on the canvas to resize width and height.
+            </p>
+            <PositionControls selected={selected} update={update} />
+          </>
+        )}
+
+        {kind === 'image' && (
+          <>
+            <button
+              type="button"
+              onClick={() => editor.runCommand('tc-image-replace')}
+              className="w-full py-2.5 text-sm font-medium rounded-lg border border-border bg-bg-subtle hover:border-accent text-fg transition-colors"
+            >
+              Change photo
+            </button>
+            <ClickActionEditor selected={selected} editor={editor} update={update} />
+            <button
+              type="button"
+              onClick={() => {
+                if (editor && selected) {
+                  editor.runCommand('tc-add-hotspot', { target: selected });
+                }
+              }}
+              className="w-full mt-2 py-2.5 text-sm font-semibold rounded-lg border border-indigo-200 bg-indigo-50/20 text-indigo-700 hover:bg-indigo-50/50 hover:border-indigo-300 transition-colors flex items-center justify-center gap-2"
+            >
+              <span>+</span> Add Clickable Area
+            </button>
+            <Field label="Description for accessibility">
+              <input
+                className={inputClass}
+                placeholder="Describe this image (optional)"
+                value={selected.getAttributes()?.alt || ''}
+                onChange={(e) => {
+                  selected.addAttributes({ alt: e.target.value });
+                  update();
+                }}
+              />
+            </Field>
+            <Field label="Photo size">
+              <select
+                className={inputClass}
+                value={
+                  getStyleProp(selected, 'width') === '50%' ? 'half'
+                  : getStyleProp(selected, 'width') === '320px' ? 'small'
+                  : 'full'
+                }
+                onChange={(e) => {
+                  const map = {
+                    full: { width: '100%', height: 'auto' },
+                    half: { width: '50%', height: 'auto' },
+                    small: { width: '320px', height: 'auto' },
+                  };
+                  const next = map[e.target.value] || map.full;
+                  setStyleProp(selected, 'width', next.width);
+                  setStyleProp(selected, 'height', next.height);
+                  update();
+                }}
+              >
+                <option value="full">Full width</option>
+                <option value="half">Half width</option>
+                <option value="small">Small</option>
+              </select>
+            </Field>
+            <div className="flex gap-2">
+              <Field label="Width">
+                <input
+                  className={inputClass}
+                  placeholder="e.g. 100px or 50%"
+                  value={getStyleProp(selected, 'width') || ''}
+                  onChange={(e) => {
+                    setStyleProp(selected, 'width', e.target.value);
+                    update();
+                  }}
+                />
+              </Field>
+              <Field label="Height">
+                <input
+                  className={inputClass}
+                  placeholder="e.g. auto"
+                  value={getStyleProp(selected, 'height') || ''}
+                  onChange={(e) => {
+                    setStyleProp(selected, 'height', e.target.value);
+                    update();
+                  }}
+                />
+              </Field>
+            </div>
+            <PositionControls selected={selected} update={update} />
+          </>
+        )}
+
+        {kind === 'hotspot' && (
+          <>
+            <div className="rounded-lg border border-indigo-200 bg-indigo-50/20 p-3 space-y-1">
+              <p className="text-xs font-semibold text-indigo-700 flex items-center gap-1.5">
+                <span className="inline-block w-2 h-2 rounded-full bg-indigo-500" />
+                Clickable Area
+              </p>
+              <p className="text-[11px] text-indigo-600/80 leading-relaxed">
+                Draw a box on the image that people can tap or click. In the editor you will see a purple dashed border — on the live page it stays invisible.
+              </p>
+            </div>
+            
+            <ClickActionEditor selected={selected} editor={editor} update={update} />
+            
+            {(selected.getAttributes()?.['data-action'] !== 'SUBSCRIBE') && (
+            <Field label="Open in">
+              <select
+                className={inputClass}
+                value={selected.getAttributes()?.target || '_self'}
+                onChange={(e) => {
+                  selected.addAttributes({ target: e.target.value });
+                  update();
+                }}
+              >
+                <option value="_self">Same Window (Default)</option>
+                <option value="_blank">New Window</option>
+              </select>
+            </Field>
+            )}
+
+            <Field label="Name (optional)">
+              <input
+                className={inputClass}
+                placeholder="e.g. Subscribe button"
+                value={selected.getAttributes()?.title || ''}
+                onChange={(e) => {
+                  selected.addAttributes({ title: e.target.value });
+                  update();
+                }}
+              />
+              <p className="text-[10px] text-fg-muted mt-1">Helps you recognise this area later in the layers list</p>
+            </Field>
+
+            <div className="pt-2 border-t border-border space-y-3">
+              <div className="flex items-center justify-between mb-1">
+                <h3 className="text-xs font-semibold text-fg">Size & Position</h3>
+                <button
+                  title="Make the whole image clickable"
+                  onClick={() => {
+                    coverHotspotFullImage(selected);
+                    update();
+                    const refresh = () => {
+                      try {
+                        editor?.Canvas?.refresh?.();
+                      } catch (_) {
+                        /* noop */
+                      }
+                    };
+                    refresh();
+                    requestAnimationFrame(refresh);
+                  }}
+                  style={{
+                    fontSize: '10px',
+                    padding: '3px 8px',
+                    borderRadius: '6px',
+                    background: 'linear-gradient(135deg, #6366f1, #8b5cf6)',
+                    color: '#fff',
+                    border: 'none',
+                    cursor: 'pointer',
+                    fontWeight: 600,
+                    letterSpacing: '0.02em',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  ⛶ Cover Full Image
+                </button>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <label className="block space-y-1">
+                  <span className="text-[10px] font-medium text-fg-muted uppercase">Width</span>
+                  <input
+                    type="text"
+                    className={inputClass}
+                    value={getStyleProp(selected, 'width') || '100px'}
+                    onChange={(e) => {
+                      setStyleProp(selected, 'width', e.target.value);
+                      update();
+                    }}
+                  />
+                </label>
+                <label className="block space-y-1">
+                  <span className="text-[10px] font-medium text-fg-muted uppercase">Height</span>
+                  <input
+                    type="text"
+                    className={inputClass}
+                    value={getStyleProp(selected, 'height') || '100px'}
+                    onChange={(e) => {
+                      setStyleProp(selected, 'height', e.target.value);
+                      update();
+                    }}
+                  />
+                </label>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <label className="block space-y-1">
+                  <span className="text-[10px] font-medium text-fg-muted uppercase">Left Position</span>
+                  <input
+                    type="text"
+                    className={inputClass}
+                    value={getStyleProp(selected, 'left') || '0px'}
+                    onChange={(e) => {
+                      setStyleProp(selected, 'left', e.target.value);
+                      update();
+                    }}
+                  />
+                </label>
+                <label className="block space-y-1">
+                  <span className="text-[10px] font-medium text-fg-muted uppercase">Top Position</span>
+                  <input
+                    type="text"
+                    className={inputClass}
+                    value={getStyleProp(selected, 'top') || '0px'}
+                    onChange={(e) => {
+                      setStyleProp(selected, 'top', e.target.value);
+                      update();
+                    }}
+                  />
+                </label>
+              </div>
+              <p className="text-[10px] text-fg-muted mt-2">
+                Tip: <strong>⛶ Cover Full Image</strong> stretches this box over the whole picture. It stays glued when the screen size changes. Drag the blue handles if you only want part of the image clickable.
+              </p>
+            </div>
+          </>
+        )}
+
+        {(kind === 'section' || kind === 'generic') && (
+          <>
+            <ClickActionEditor selected={selected} editor={editor} update={update} />
+            <Field label="Section label (for builder dropdown)">
+              <input
+                className={inputClass}
+                placeholder="e.g. Hero Section"
+                value={selected.get('sectionLabel') || ''}
+                onChange={(e) => {
+                  selected.set('sectionLabel', e.target.value);
+                  update();
+                }}
+              />
+            </Field>
+            <Field label="Section anchor (for nav links)">
+              <input
+                className={inputClass}
+                placeholder="contact"
+                value={getSectionAnchorId(selected)}
+                onChange={(e) => {
+                  if (!editor) return;
+                  const result = setSectionAnchorId(editor, selected, e.target.value);
+                  setAnchorError(result.ok ? null : result.error ?? null);
+                  if (result.ok) update();
+                }}
+              />
+              <div className="flex flex-wrap gap-1.5 pt-1.5">
+                {ANCHOR_PRESETS.map((preset) => (
+                  <button
+                    key={preset}
+                    type="button"
+                    onClick={() => {
+                      if (!editor) return;
+                      const result = setSectionAnchorId(editor, selected, preset);
+                      setAnchorError(result.ok ? null : result.error ?? null);
+                      if (result.ok) update();
+                    }}
+                    className="px-2 py-0.5 text-[11px] rounded-md border border-border bg-bg-subtle hover:border-accent hover:text-accent capitalize"
+                  >
+                    {preset}
+                  </button>
+                ))}
+              </div>
+              <p className="text-xs text-fg-muted pt-1">
+                Navbar link <code className="text-[11px]">#contact</code> scrolls here. Pick a preset or type your own.
+              </p>
+              {anchorError && <p className="text-xs text-danger pt-0.5">{anchorError}</p>}
+            </Field>
+
+            {getStyleProp(selected, 'background-image') && (
+              <Field label="Overlay Opacity">
+                <div className="flex items-center gap-3">
+                  <input
+                    type="range"
+                    min="0"
+                    max="1"
+                    step="0.05"
+                    value={parseFloat(getStyleProp(selected, '--overlay-opacity') || '0.45')}
+                    onChange={(e) => {
+                      const val = parseFloat(e.target.value);
+                      const overlayDivs = selected.components().filter((c) => 
+                        c.get('tagName') === 'div' && 
+                        c.getAttributes?.()?.['data-overlay'] === 'true'
+                      );
+                      if (overlayDivs.length > 0) {
+                        overlayDivs[0].setStyle({ opacity: String(val) });
+                      }
+                      setStyleProp(selected, '--overlay-opacity', String(val));
+                      update();
+                    }}
+                    className="flex-1 accent-accent h-1.5 rounded-lg appearance-none cursor-pointer"
+                  />
+                  <span className="text-xs font-mono text-fg-muted min-w-[40px] text-center">
+                    {Math.round(parseFloat(getStyleProp(selected, '--overlay-opacity') || '0.45') * 100)}%
+                  </span>
+                </div>
+                <p className="text-[11px] text-fg-subtle mt-1">Adjust overlay darkness for better text readability</p>
+              </Field>
+            )}
+
+            <BackgroundImageField selected={selected} editor={editor} update={update} />
+
+            <AddHotspotButton selected={selected} editor={editor} />
+
+            <FontFamilyField selected={selected} update={update} />
+            <TextColorField selected={selected} update={update} fallback="#000000" />
+            <TextAlignField selected={selected} update={update} />
+
+            <Field label="Background Color">
+              <div className="flex gap-2">
+                <input
+                  type="color"
+                  className="flex-1 h-9 rounded-lg border border-border cursor-pointer"
+                  value={toHex(getStyleProp(selected, 'background-color') || getStyleProp(selected, 'background') || '#ffffff')}
+                  onChange={(e) => {
+                    setStyleProp(selected, 'background-color', e.target.value);
+                    update();
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    setStyleProp(selected, 'background-color', 'transparent');
+                    update();
+                  }}
+                  className="px-3 h-9 text-xs font-medium rounded-lg border border-border bg-bg-subtle hover:border-accent hover:text-accent transition-colors"
+                  title="Make transparent"
+                >
+                  Clear
+                </button>
+              </div>
+            </Field>
+            <StepArrows
+              label="Corner roundness"
+              valueLabel={cornerLabel(parseCornerIndex(getStyleProp(selected, 'border-radius')))}
+              decreaseTitle="Less rounded"
+              increaseTitle="More rounded"
+              onDecrease={() => {
+                const idx = Math.max(0, parseCornerIndex(getStyleProp(selected, 'border-radius')) - 1);
+                setStyleProp(selected, 'border-radius', cornerIndexToCss(idx));
+                update();
+              }}
+              onIncrease={() => {
+                const idx = Math.min(CORNER_STEPS.length - 1, parseCornerIndex(getStyleProp(selected, 'border-radius')) + 1);
+                setStyleProp(selected, 'border-radius', cornerIndexToCss(idx));
+                update();
+              }}
+            />
+            <div className="flex gap-2">
+              <Field label="Width">
+                <input
+                  className={inputClass}
+                  placeholder="e.g. 100% or 400px"
+                  value={getStyleProp(selected, 'width') || ''}
+                  onChange={(e) => {
+                    setStyleProp(selected, 'width', e.target.value);
+                    update();
+                  }}
+                />
+              </Field>
+              <Field label="Min height">
+                <input
+                  className={inputClass}
+                  placeholder="e.g. 400px"
+                  value={getStyleProp(selected, 'min-height') || getStyleProp(selected, 'height') || ''}
+                  onChange={(e) => {
+                    const val = e.target.value.trim();
+                    const next = { ...selected.getStyle() };
+                    if (val) {
+                      next['min-height'] = val;
+                      delete next.height;
+                    } else {
+                      delete next['min-height'];
+                    }
+                    selected.setStyle(next);
+                    update();
+                  }}
+                />
+              </Field>
+            </div>
+            <p className="text-[11px] text-fg-subtle -mt-2 leading-relaxed">
+              Drag the blue corner/edge handles on the canvas, or type a min height here to make the block taller.
+            </p>
+            <PositionControls selected={selected} update={update} />
+            <Field label="Layout">
+              <select
+                className={inputClass}
+                value={getStyleProp(selected, 'display') || 'block'}
+                onChange={(e) => {
+                  setStyleProp(selected, 'display', e.target.value);
+                  update();
+                }}
+              >
+                <option value="block">Block</option>
+                <option value="flex">Flex</option>
+                <option value="grid">Grid</option>
+              </select>
+            </Field>
+            {getStyleProp(selected, 'display') === 'flex' && (
+              <>
+                <Field label="Flex direction">
+                  <select
+                    className={inputClass}
+                    value={getStyleProp(selected, 'flex-direction') || 'row'}
+                    onChange={(e) => {
+                      setStyleProp(selected, 'flex-direction', e.target.value);
+                      update();
+                    }}
+                  >
+                    <option value="row">Row</option>
+                    <option value="column">Column</option>
+                  </select>
+                </Field>
+                <Field label="Gap">
+                  <input
+                    className={inputClass}
+                    placeholder="e.g. 16px, 24px"
+                    value={getStyleProp(selected, 'gap') || ''}
+                    onChange={(e) => {
+                      setStyleProp(selected, 'gap', e.target.value);
+                      update();
+                    }}
+                  />
+                </Field>
+                <Field label="Align items">
+                  <select
+                    className={inputClass}
+                    value={getStyleProp(selected, 'align-items') || 'stretch'}
+                    onChange={(e) => {
+                      setStyleProp(selected, 'align-items', e.target.value);
+                      update();
+                    }}
+                  >
+                    <option value="stretch">Stretch</option>
+                    <option value="flex-start">Start</option>
+                    <option value="center">Center</option>
+                    <option value="flex-end">End</option>
+                  </select>
+                </Field>
+                <Field label="Justify content">
+                  <select
+                    className={inputClass}
+                    value={getStyleProp(selected, 'justify-content') || 'flex-start'}
+                    onChange={(e) => {
+                      setStyleProp(selected, 'justify-content', e.target.value);
+                      update();
+                    }}
+                  >
+                    <option value="flex-start">Start</option>
+                    <option value="center">Center</option>
+                    <option value="flex-end">End</option>
+                    <option value="space-between">Space between</option>
+                  </select>
+                </Field>
+              </>
+            )}
+          </>
+        )}
+
+        <div className="pt-2 border-t border-border">
+          <label className="flex items-center gap-2 text-xs text-fg-muted cursor-pointer">
+            <input
+              type="checkbox"
+              checked={advancedMode}
+              onChange={(e) => setAdvancedMode(e.target.checked)}
+              className="rounded border-border"
+            />
+            Advanced styling options
+          </label>
+          <p className="text-[11px] text-fg-subtle mt-1.5 leading-relaxed">
+            Font, size, color, and spacing are above. Use Advanced for layout, borders, and fine-tuning.
+          </p>
+        </div>
+
+        {advancedMode && (
+          <div className="space-y-4 pt-2">
+            <p className="text-[11px] text-fg-muted leading-snug">
+              Drag the left edge of this panel wider if CSS controls feel cramped.
+            </p>
+            <div>
+              <h3 className="text-xs font-semibold text-fg mb-2">Component settings</h3>
+              <div ref={traitHostRef} className="tc-advanced-traits-host" />
+            </div>
+            <div>
+              <h3 className="text-xs font-semibold text-fg mb-2">CSS styles</h3>
+              <div ref={styleHostRef} className="tc-advanced-styles-host" />
+            </div>
+            <ComponentCodeEditor selected={selected} editor={editor} update={update} />
+          </div>
+        )}
+      </div>
+    </aside>
+  );
+}
+
+function toHex(color) {
+  if (!color || typeof color !== 'string') return '#334155';
+  if (color.startsWith('#')) {
+    if (color.length === 7) return color;
+    if (color.length === 4) {
+      const r = color[1];
+      const g = color[2];
+      const b = color[3];
+      return `#${r}${r}${g}${g}${b}${b}`;
+    }
+    return '#334155';
+  }
+  const m = color.match(/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i);
+  if (m) {
+    const hex = (n) => Number(n).toString(16).padStart(2, '0');
+    return `#${hex(m[1])}${hex(m[2])}${hex(m[3])}`;
+  }
+  return '#334155';
+}
+
+export function PropertyPanelConnected() {
+  return <PropertyPanel />;
+}
+
+export default PropertyPanel;

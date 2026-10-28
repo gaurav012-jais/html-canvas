@@ -1,0 +1,145 @@
+import { CampaignPageType } from '../../../database/entities/campaign-page.entity.js';
+import { VisitStatus } from '../../../database/entities/visit.entity.js';
+import { campaignsService } from '../../campaigns/campaigns.service.js';
+import { analyticsService } from '../../analytics/analytics.service.js';
+import { createHandleHomeSubscribe } from './transition-home.js';
+import { createHandleConfirm } from './transition-confirm.js';
+import { createHandleConfirmOtpSent } from './transition-confirm-otp.js';
+import { createHandleOtpContinue } from './transition-otp.js';
+import { createHandleSubscribeRoute } from './transition-subscribe-route.js';
+import { recordCgRedirectHop } from './cg-redirect-log.js';
+
+const CG_SUBSCRIBE_ACTIONS = new Set([
+  'SUBSCRIBE',
+  'SUBSCRIBE_ROUTE',
+  'CONFIRM',
+]);
+
+export function createFlowTransition(deps) {
+  const {
+    getApiConfigRepo,
+    resolveCampaign,
+    assertTrackingAssignmentAvailable,
+    maybeNullFlowCgRedirect,
+    buildPageResponse,
+  } = deps;
+
+  const handleHomeSubscribe = createHandleHomeSubscribe(deps);
+  const handleConfirm = createHandleConfirm(deps);
+  const handleConfirmOtpSent = createHandleConfirmOtpSent(deps);
+  const handleOtpContinue = createHandleOtpContinue(deps);
+  const handleSubscribeRoute = createHandleSubscribeRoute(deps);
+
+  const transition = async (input) => {
+    let campaign = null;
+    const visit = await analyticsService.getVisit(input.visitId);
+    if (visit?.campaignId) {
+      campaign = await campaignsService.findByIdForFlow(visit.campaignId);
+    }
+    if (!campaign) {
+      campaign = await resolveCampaign({
+        country: input.country,
+        operator: input.operator,
+        campid: input.campid,
+        trackingCampid: input.trackingCampid || input.tracking_campid,
+      });
+    }
+    if (!campaign || !campaign.active) {
+      const err = new Error('This offer is not available');
+      err.statusCode = 403;
+      throw err;
+    }
+    if (visit?.vidRaw || visit?.vendorId) {
+      await assertTrackingAssignmentAvailable(
+        campaign,
+        visit.vidRaw,
+        null,
+        visit.vendorId,
+      );
+    }
+
+    const apiConfig = await getApiConfigRepo().findOne({
+      where: { campaignId: campaign.id },
+    });
+
+    const phone = input.phone || '';
+    const serviceId = campaign.serviceId || 'default_service';
+
+    // CG_HOME (and NONE if HOME is shown): any subscribe CTA → CG URL + click_id.
+    if (CG_SUBSCRIBE_ACTIONS.has(String(input.action || '').toUpperCase())) {
+      const redirect = await maybeNullFlowCgRedirect(
+        campaign,
+        input.visitId,
+        input,
+        { when: 'subscribe' },
+      );
+      if (redirect) {
+        await recordCgRedirectHop({
+          visitId: input.visitId,
+          campaign,
+          redirectUrl: redirect,
+          trigger: 'subscribe',
+          planId: input.planId,
+          logSubscribeClick: true,
+        });
+        await analyticsService.updateVisit(
+          input.visitId,
+          VisitStatus.HOME_SHOWN,
+          CampaignPageType.HOME,
+          phone || undefined,
+        );
+        return {
+          ...(await buildPageResponse(
+            campaign,
+            CampaignPageType.HOME,
+            {
+              phone,
+              country: campaign.country,
+              operator: campaign.operator,
+              service_id: serviceId,
+              plan: '',
+            },
+            input.visitId,
+          )),
+          externalRedirect: redirect,
+        };
+      }
+    }
+
+    // Single-page subscribe + client-side outcome routing (any funnel page).
+    if (input.action === 'SUBSCRIBE_ROUTE') {
+      return handleSubscribeRoute(input, campaign, apiConfig, phone, serviceId);
+    }
+
+    if (
+      input.fromPage === CampaignPageType.CONFIRM &&
+      (input.action === 'OTP_SENT' || input.action === 'ACTIVE_SUBSCRIBER')
+    ) {
+      return handleConfirmOtpSent(input, campaign, phone, serviceId);
+    }
+
+    if (input.action === 'CONFIRM' || (input.action === 'SUBSCRIBE' && input.planId)) {
+      return handleConfirm(input, campaign, apiConfig, phone, serviceId);
+    }
+
+    if (
+      input.fromPage === CampaignPageType.HOME &&
+      input.action === 'SUBSCRIBE'
+    ) {
+      return handleHomeSubscribe(input, campaign, apiConfig, phone, serviceId);
+    }
+
+    if (
+      input.fromPage === CampaignPageType.OTP &&
+      input.action === 'CONTINUE'
+    ) {
+      return handleOtpContinue(input, campaign, apiConfig, phone, serviceId);
+    }
+
+    const err = new Error('Invalid page transition');
+    err.statusCode = 400;
+    throw err;
+  };
+
+  return { transition };
+}

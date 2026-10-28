@@ -1,0 +1,106 @@
+import * as partnersApi from '../../services/api/partners'
+
+/** In-flight promise dedupe (survives React Strict Mode double-mount). */
+let vendorsInflight = null
+
+export function createPartnersSlice(set, get) {
+  return {
+    vendors: [],
+    vendorsLoading: false,
+    vendorsFetched: false,
+    vendorsRevision: 0,
+
+    bumpVendorsRevision: () => set((s) => ({ vendorsRevision: s.vendorsRevision + 1 })),
+
+    /**
+     * List vendors. Cached after first successful load.
+     * Pass `{ force: true }` only when you need a hard reload.
+     */
+    fetchVendors: async ({ force = false } = {}) => {
+      if (!force && get().vendorsFetched) return get().vendors
+      if (!force && vendorsInflight) return vendorsInflight
+
+      const run = async () => {
+        set({ vendorsLoading: true })
+        try {
+          const vendors = (await partnersApi.listVendors()) || []
+          set({ vendors, vendorsLoading: false, vendorsFetched: true })
+          return vendors
+        } catch (err) {
+          set({ vendorsLoading: false })
+          get().addToast(err.message || 'Failed to load vendors', 'error')
+          throw err
+        } finally {
+          vendorsInflight = null
+        }
+      }
+
+      vendorsInflight = run()
+      return vendorsInflight
+    },
+
+    createVendor: async (payload) => {
+      try {
+        const vendor = await partnersApi.createVendor(payload)
+        set((s) => ({
+          vendors: [vendor, ...s.vendors],
+          vendorsFetched: true,
+          vendorsRevision: s.vendorsRevision + 1,
+        }))
+        get().addToast('Vendor created', 'success')
+        return vendor
+      } catch (err) {
+        get().addToast(err.message || 'Failed to create vendor', 'error')
+        throw err
+      }
+    },
+
+    updateVendor: async (vendorId, payload) => {
+      try {
+        const vendor = await partnersApi.updateVendor(vendorId, payload)
+        set((s) => ({
+          vendors: s.vendors.map((v) =>
+            v.id === vendorId ? { ...v, ...vendor } : v,
+          ),
+          vendorsRevision: s.vendorsRevision + 1,
+        }))
+        get().addToast(
+          payload.active === false
+            ? 'Vendor deactivated'
+            : payload.active === true
+              ? 'Vendor activated'
+              : 'Vendor updated',
+          'success',
+        )
+        return vendor
+      } catch (err) {
+        get().addToast(err.message || 'Failed to update vendor', 'error')
+        throw err
+      }
+    },
+
+    deleteVendor: async (vendorId) => {
+      try {
+        await partnersApi.deleteVendor(vendorId)
+        set((s) => ({
+          vendors: s.vendors.filter((v) => v.id !== vendorId),
+          vendorsRevision: s.vendorsRevision + 1,
+        }))
+        get().addToast('Vendor deleted', 'success')
+      } catch (err) {
+        get().addToast(err.message || 'Failed to delete vendor', 'error')
+        throw err
+      }
+    },
+
+    resetVendorsCache: () => {
+      vendorsInflight = null
+      set({
+        vendors: [],
+        vendorsLoading: false,
+        vendorsFetched: false,
+        vendorsRevision: 0,
+      })
+    },
+  }
+}

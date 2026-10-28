@@ -1,0 +1,32 @@
+version: '3.8'
+
+# MySQL is external — Elasticsearch and Redis run in Docker.
+# Usage: docker compose up -d
+
+services:
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.14.3
+    container_name: templatecraft_elasticsearch
+    restart: always
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m
+    ports:
+      - '127.0.0.1:9200:9200'
+    volumes:
+      - es_data:/usr/share/elasticsearch/data
+
+  redis:
+    image: redis:7-alpine
+    container_name: templatecraft_redis
+    restart: always
+    command: redis-server --maxmemory 64mb --maxmemory-policy noeviction
+    ports:
+      - '127.0.0.1:6380:6379'
+    volumes:
+      - redis_data:/data
+
+volumes:
+  es_data:
+  redis_data:

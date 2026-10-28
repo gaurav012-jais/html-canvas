@@ -1,0 +1,513 @@
+import { checkDcbMsisdn, confirmDcbPincode, getDcbConfig, sendDcbPincode } from '../../services/api/dcb'
+import { sendOtp, verifyOtp } from '../../services/api/otp'
+import { formatMsisdnWithCountryCode, persistPhone } from '../../services/flow/resolvePhoneNumber'
+import { applyDcbStageUi } from '../../services/flow/dcbStageUi'
+import { getCountryCodeFromDom } from './setupOtpBindings'
+
+const DCB_STAGES = new Set([
+  'MANUAL_MSISDN',
+  'MANUAL_CHECK',
+  'MANUAL_ENTRY',
+  'MSISDN_REQUIRED',
+  'PLAN_SELECT',
+  'SELECT_PLAN',
+  'PLAN_REQUIRED',
+  'PURCHASE_TYPE_SELECTION',
+  'BILLING_PIN',
+  'PIN_ENTRY',
+  'PIN_SENT',
+  'PIN_REQUIRED',
+  'AUTH_OTP',
+  'AUTHORIZATION_REQUIRED',
+  'POLLING',
+  'INPROGRESS',
+])
+
+function normalizeDcbStage(pageData) {
+  const context = pageData?.flowContext || {}
+  return String(context.stage || context.step || context.action || '')
+    .trim()
+    .toUpperCase()
+}
+
+function isDcbFlowContext(pageData) {
+  const context = pageData?.flowContext
+  if (!context || typeof context !== 'object') return false
+  const marker = String(
+    pageData?.verificationMode || context.verificationMode || context.mode || context.provider || ''
+  ).toUpperCase()
+  return (
+    marker.includes('UNIVERSE') ||
+    marker.includes('DCB') ||
+    DCB_STAGES.has(normalizeDcbStage(pageData)) ||
+    Array.isArray(context.purchaseTypes) ||
+    Boolean(context.purchaseTypeId)
+  )
+}
+
+function normalizedOutcome(response) {
+  return String(response?.outcome || response?.routeOutcome || response?.flowContext?.outcome || response?.status || '')
+    .trim()
+    .toUpperCase()
+}
+
+function pageForDcbOutcome(outcome, status, checksubConfig = null) {
+  const normStatus = String(status || '').trim().toUpperCase()
+
+  if (checksubConfig && Array.isArray(checksubConfig.rules) && checksubConfig.rules.length > 0) {
+    for (const rule of checksubConfig.rules) {
+      if (String(rule.value || '').trim().toUpperCase() === normStatus) {
+        if (rule.go === 'page' && rule.page) return String(rule.page).toUpperCase()
+        if (rule.go === 'continue') return 'HOME'
+      }
+    }
+    if (checksubConfig.missPage && checksubConfig.missGo === 'page') {
+      return String(checksubConfig.missPage).toUpperCase()
+    }
+  }
+
+  if (normStatus === 'PENDING_PIN') return 'OTP'
+  if (outcome === 'ENTITLED') return 'THANKYOU'
+  if (outcome === 'LOW_BALANCE') return 'LOW_BALANCE'
+  if (outcome === 'TERMINAL_FAILURE' || outcome === 'PARSE_ERROR') return 'ERROR'
+  if (outcome === 'PENDING') return 'INPROGRESS'
+  if (outcome === 'NEW') return 'HOME'
+  return null
+}
+
+async function routeDcbResponse(response, { currentPage, cachePage, loadPage, checksubConfig = null }) {
+  if (!response) return null
+  const responseStage = String(response.stage || response.flowContext?.stage || '').toUpperCase()
+  const explicitPage = String(response.nextPage || response.pageType || '')
+    .trim()
+    .toUpperCase()
+  const cfg = checksubConfig || response?.flowContext?.checksubConfig || response?.checksubConfig || null
+  const targetPage =
+    (responseStage === 'PIN_REQUIRED' && !explicitPage ? 'OTP' : null) ||
+    explicitPage ||
+    pageForDcbOutcome(
+      normalizedOutcome(response),
+      response?.status || response?.flowContext?.status,
+      cfg
+    )
+
+  if (response.pageType && response.html) {
+    cachePage(response)
+    return response.pageType
+  }
+  if (targetPage && targetPage !== String(currentPage || '').toUpperCase()) {
+    await loadPage(targetPage, { direct: true })
+  } else if (response.pageType) {
+    cachePage(response)
+  }
+  return targetPage
+}
+
+function purchaseTypesFrom(source) {
+  const raw = source?.purchaseTypes || source?.purchaseTypeMappings || source?.purchaseTypeMap || []
+  if (Array.isArray(raw)) return raw
+  if (raw && typeof raw === 'object') {
+    return Object.entries(raw).map(([packKey, value]) => ({
+      packKey,
+      ...(value && typeof value === 'object' ? value : { purchaseTypeId: value }),
+    }))
+  }
+  return []
+}
+
+function resolvePurchaseType(source, packKey, directId) {
+  if (directId) return String(directId)
+  const wanted = String(packKey || '')
+    .trim()
+    .toLowerCase()
+  const match = purchaseTypesFrom(source).find((item) => {
+    const keys = [item?.packKey, item?.pack, item?.key, item?.slug, item?.id]
+    return keys.some(
+      (key) =>
+        String(key || '')
+          .trim()
+          .toLowerCase() === wanted
+    )
+  })
+  return String(match?.purchaseTypeId ?? match?.id ?? '')
+}
+
+function adaptDcbStageUi(shadow, stage, { phoneInput, pinInput }) {
+  applyDcbStageUi(shadow, stage, { phoneInput, pinInput })
+}
+
+function setupDcbBindings(
+  shadow,
+  {
+    pageData,
+    cachePage,
+    loadPage,
+    country,
+    operator,
+    campid,
+    trackingCampid,
+    visitIdRef,
+    phoneRef,
+    selectedPackRef,
+    setPhone,
+    setTransitioning,
+    setError,
+    saveSession,
+    transitionLockRef,
+  }
+) {
+  if (!isDcbFlowContext(pageData)) return null
+
+  const context = pageData.flowContext || {}
+  const saved = (() => {
+    try {
+      return JSON.parse(sessionStorage.getItem(`tc_session_${country}_${operator}`) || '{}')
+    } catch {
+      return {}
+    }
+  })()
+  let currentStage =
+    saved.dcbStage && String(pageData.pageType || '').toUpperCase() === 'OTP'
+      ? saved.dcbStage
+      : normalizeDcbStage(pageData)
+  const phoneInput = shadow.querySelector(
+    '[data-dcb-field="phone"], [data-otp-field="phone"], [data-field="phone"], input[type="tel"]'
+  )
+  const pinInput = shadow.querySelector(
+    '[data-dcb-field="pin"], [data-otp-field="otp"], [data-field="otp"], [data-field="pin"]'
+  )
+  const errorSlot = shadow.querySelector('[data-dcb-slot="error"], [data-otp-slot="error"], [data-slot="error"]')
+  const statusSlot = shadow.querySelector('[data-dcb-slot="status"], [data-otp-slot="status"], [data-slot="status"]')
+  let busy = false
+
+  adaptDcbStageUi(shadow, currentStage, { phoneInput, pinInput })
+  if (phoneInput && phoneRef.current) phoneInput.value = phoneRef.current
+
+  const isErrorSlot = (el) => {
+    if (!el) return false
+    return (
+      el.matches?.(
+        '[data-dcb-slot="error"], [data-otp-slot="error"], [data-slot="error"], .dcb-error-slot, .bf-error-slot, .wjo-error',
+      ) ||
+      el.getAttribute?.('data-dcb-slot') === 'error' ||
+      el.getAttribute?.('data-otp-slot') === 'error' ||
+      el.getAttribute?.('data-slot') === 'error'
+    )
+  }
+
+  const setSlot = (slot, text, error = false) => {
+    const isErr = error || isErrorSlot(slot)
+    const selector = isErr
+      ? '[data-dcb-slot="error"], [data-otp-slot="error"], [data-slot="error"], .dcb-error-slot, .bf-error-slot, .wjo-error'
+      : '[data-dcb-slot="status"], [data-otp-slot="status"], [data-slot="status"], .dcb-status-slot, .bf-status-slot, .wjo-status'
+    const slots = shadow.querySelectorAll(selector)
+    if (slots.length > 0) {
+      slots.forEach((s) => {
+        s.textContent = text || ''
+        s.style.color = isErr ? '#dc2626' : '#4b5563'
+        if (text) {
+          s.hidden = false
+          if (s.style.display === 'none') s.style.display = ''
+        }
+      })
+    } else if (slot) {
+      slot.textContent = text || ''
+      slot.style.color = isErr ? '#dc2626' : '#4b5563'
+    }
+  }
+  const commonPayload = (phone) => ({
+    visitId: visitIdRef.current,
+    phone: phone || phoneRef.current || undefined,
+    msisdn: phone || phoneRef.current || undefined,
+    country,
+    operator,
+    campid: campid || undefined,
+    trackingCampid: trackingCampid || undefined,
+  })
+  const savedDcbSession = () => {
+    try {
+      return JSON.parse(sessionStorage.getItem(`tc_session_${country}_${operator}`) || '{}')
+    } catch {
+      return {}
+    }
+  }
+  const run = async (work, pendingText) => {
+    if (busy || transitionLockRef.current) return
+    busy = true
+    transitionLockRef.current = true
+    setTransitioning(true)
+    setError('')
+    setSlot(errorSlot, '')
+    setSlot(statusSlot, pendingText)
+    try {
+      await work()
+    } catch (error) {
+      setSlot(statusSlot, '')
+      setSlot(errorSlot, error.message || 'DCB request failed', true)
+    } finally {
+      busy = false
+      transitionLockRef.current = false
+      setTransitioning(false)
+    }
+  }
+
+  const handleManualCheck = (event) => {
+    event.preventDefault()
+    event.stopImmediatePropagation()
+    const activeCountryCode = getCountryCodeFromDom(phoneInput, shadow)
+    const rawVal = String(phoneInput?.value || phoneRef.current || '').replace(/\D/g, '')
+    const phone = formatMsisdnWithCountryCode(rawVal, activeCountryCode)
+    if (!phone) {
+      setSlot(errorSlot, 'Please enter a valid mobile number', true)
+      return
+    }
+    run(async () => {
+      const response = await checkDcbMsisdn(commonPayload(phone))
+      phoneRef.current = phone
+      setPhone(phone)
+      persistPhone(phone)
+      const responseStage = String(response?.stage || response?.flowContext?.stage || '').toUpperCase()
+      const authOtp = responseStage === 'AUTH_OTP' || response?.authorization === 'PARTNER_OTP'
+      const pinReady = responseStage === 'PIN_REQUIRED'
+      saveSession({
+        phone,
+        msisdnSource: 'MANUAL',
+        transactionChannel: 'Wifi',
+        dcbStage: authOtp ? 'AUTH_OTP' : pinReady ? 'PIN_REQUIRED' : 'PLAN_SELECT',
+        ...(response?.purchaseTypeId ? { purchaseTypeId: response.purchaseTypeId } : {}),
+      })
+      if (authOtp) {
+        currentStage = 'AUTH_OTP'
+        adaptDcbStageUi(shadow, 'AUTH_OTP', { phoneInput, pinInput })
+        await sendOtp({ phone, visitId: visitIdRef.current })
+        setSlot(statusSlot, 'OTP sent. Check the server log or enter 1234.')
+        if (String(pageData.pageType || '').toUpperCase() !== 'OTP') {
+          await loadPage('OTP', { direct: true })
+        }
+        return
+      }
+      if (pinReady) {
+        currentStage = 'PIN_REQUIRED'
+        setSlot(statusSlot, 'PIN sent')
+        await loadPage('OTP', { direct: true })
+        return
+      }
+      setSlot(statusSlot, 'Number checked')
+      const target = await routeDcbResponse(response, {
+        currentPage: pageData.pageType,
+        cachePage,
+        loadPage,
+      })
+      // Pack page is HOME. OTP here is not the PIN stage — that case returned above.
+      if (!target || target === 'OTP') {
+        await loadPage('HOME', { direct: true })
+      }
+    }, 'Checking subscription...')
+  }
+
+  const handlePlanClick = (event, node) => {
+    event.preventDefault()
+    event.stopImmediatePropagation()
+    const packKey = node.getAttribute('data-pack') || node.getAttribute('data-plan') || selectedPackRef.current || ''
+    const directId = node.getAttribute('data-purchase-type-id')
+    run(async () => {
+      let purchaseTypeId = resolvePurchaseType(context, packKey, directId) || String(context.purchaseTypeId || '')
+      if (!purchaseTypeId) {
+        const config = await getDcbConfig(commonPayload())
+        purchaseTypeId = resolvePurchaseType(config, packKey, directId)
+      }
+      if (!purchaseTypeId) {
+        throw new Error('This plan is not mapped to a Universe purchase type.')
+      }
+      const saved = savedDcbSession()
+      const msisdnSource = context.msisdnSource || saved.msisdnSource
+      const transactionChannel =
+        context.transactionChannel ||
+        saved.transactionChannel ||
+        (String(msisdnSource || '').toUpperCase() === 'HE' ? 'HE' : 'Wifi')
+      selectedPackRef.current = packKey || selectedPackRef.current
+      saveSession({
+        purchaseTypeId,
+        transactionChannel,
+        msisdnSource: msisdnSource || undefined,
+        dcbStage: 'PIN_REQUIRED',
+      })
+      const response = await sendDcbPincode({
+        ...commonPayload(),
+        purchaseTypeId,
+        transactionChannel,
+      })
+      setSlot(statusSlot, 'PIN sent')
+      const target = await routeDcbResponse(response, {
+        currentPage: pageData.pageType,
+        cachePage,
+        loadPage,
+      })
+      if (!target || target === 'HOME') {
+        await loadPage('OTP', { direct: true })
+      }
+    }, 'Sending PIN...')
+  }
+
+  const handleConfirm = (event) => {
+    event.preventDefault()
+    event.stopImmediatePropagation()
+    const pin = String(pinInput?.value || '').trim()
+    if (!pin) {
+      setSlot(errorSlot, 'Please enter the PIN', true)
+      return
+    }
+
+    const minAttr = pinInput?.getAttribute('minlength') || pinInput?.getAttribute('data-min-length')
+    const min = minAttr != null && minAttr !== '' ? parseInt(minAttr, 10) : NaN
+    if (Number.isFinite(min) && min > 0 && pin.length < min) {
+      setSlot(errorSlot, `PIN must be at least ${min} characters`, true)
+      return
+    }
+
+    const maxAttr = pinInput?.getAttribute('maxlength') || pinInput?.getAttribute('data-max-length')
+    const max = maxAttr != null && maxAttr !== '' ? parseInt(maxAttr, 10) : NaN
+    if (Number.isFinite(max) && max > 0 && pin.length > max) {
+      setSlot(errorSlot, `PIN cannot exceed ${max} characters`, true)
+      return
+    }
+
+    run(async () => {
+      const response = await confirmDcbPincode({
+        ...commonPayload(),
+        pin,
+      })
+      setSlot(statusSlot, 'PIN confirmed. Activating subscription...')
+      await routeDcbResponse(response, {
+        currentPage: pageData.pageType,
+        cachePage,
+        loadPage,
+      })
+    }, 'Confirming PIN...')
+  }
+
+  const handleAuthSend = (event) => {
+    event.preventDefault()
+    event.stopImmediatePropagation()
+    const activeCountryCode = getCountryCodeFromDom(phoneInput, shadow)
+    const rawVal = String(phoneRef.current || phoneInput?.value || '').replace(/\D/g, '')
+    const phone = formatMsisdnWithCountryCode(rawVal, activeCountryCode)
+    if (!phone) {
+      setSlot(errorSlot, 'Please enter a valid mobile number', true)
+      return
+    }
+
+    const minAttr = phoneInput?.getAttribute('minlength') || phoneInput?.getAttribute('data-min-length')
+    const min = minAttr != null && minAttr !== '' ? parseInt(minAttr, 10) : NaN
+    if (Number.isFinite(min) && min > 0 && rawVal.length < min) {
+      setSlot(errorSlot, `Mobile number must be at least ${min} digits`, true)
+      return
+    }
+
+    const maxAttr = phoneInput?.getAttribute('maxlength') || phoneInput?.getAttribute('data-max-length')
+    const max = maxAttr != null && maxAttr !== '' ? parseInt(maxAttr, 10) : NaN
+    if (Number.isFinite(max) && max > 0 && rawVal.length > max) {
+      setSlot(errorSlot, `Mobile number cannot exceed ${max} digits`, true)
+      return
+    }
+
+    run(async () => {
+      await sendOtp({ phone, visitId: visitIdRef.current })
+      setSlot(statusSlot, 'OTP sent. Check the server log or enter 1234.')
+    }, 'Sending OTP...')
+  }
+
+  const handleAuthVerify = (event) => {
+    event.preventDefault()
+    event.stopImmediatePropagation()
+    const activeCountryCode = getCountryCodeFromDom(phoneInput, shadow)
+    const rawVal = String(phoneRef.current || phoneInput?.value || '').replace(/\D/g, '')
+    const phone = formatMsisdnWithCountryCode(rawVal, activeCountryCode)
+    const otp = String(pinInput?.value || '').trim()
+    if (!otp) {
+      setSlot(errorSlot, 'Please enter the OTP', true)
+      return
+    }
+
+    const minAttr = pinInput?.getAttribute('minlength') || pinInput?.getAttribute('data-min-length')
+    const min = minAttr != null && minAttr !== '' ? parseInt(minAttr, 10) : NaN
+    if (Number.isFinite(min) && min > 0 && otp.length < min) {
+      setSlot(errorSlot, `OTP must be at least ${min} characters`, true)
+      return
+    }
+
+    const maxAttr = pinInput?.getAttribute('maxlength') || pinInput?.getAttribute('data-max-length')
+    const max = maxAttr != null && maxAttr !== '' ? parseInt(maxAttr, 10) : NaN
+    if (Number.isFinite(max) && max > 0 && otp.length > max) {
+      setSlot(errorSlot, `OTP cannot exceed ${max} characters`, true)
+      return
+    }
+    run(async () => {
+      await verifyOtp({ phone, otp, visitId: visitIdRef.current })
+      saveSession({ dcbStage: undefined })
+      setSlot(statusSlot, 'OTP verified')
+      await loadPage('THANKYOU', { direct: true })
+    }, 'Verifying OTP...')
+  }
+
+  const handleClick = (event) => {
+    const path = event.composedPath?.() || []
+    const node = path.find(
+      (item) =>
+        item instanceof HTMLElement &&
+        item.matches('[data-dcb-action], [data-otp-action], [data-action], [data-purchase-type-id]')
+    )
+    if (!node) return
+    const action = String(
+      node.getAttribute('data-dcb-action') ||
+        node.getAttribute('data-otp-action') ||
+        node.getAttribute('data-action') ||
+        ''
+    ).toUpperCase()
+
+    if (['MANUAL_MSISDN', 'MANUAL_CHECK', 'MANUAL_ENTRY', 'MSISDN_REQUIRED'].includes(currentStage)) {
+      if (['MANUAL-CHECK', 'MANUAL_CHECK', 'SEND'].includes(action)) {
+        handleManualCheck(event)
+      }
+      return
+    }
+    if (['PLAN_SELECT', 'SELECT_PLAN', 'PLAN_REQUIRED', 'PURCHASE_TYPE_SELECTION'].includes(currentStage)) {
+      if (
+        node.hasAttribute('data-purchase-type-id') ||
+        ['SEND-PIN', 'SEND_PIN', 'SUBSCRIBE', 'CONFIRM'].includes(action)
+      ) {
+        handlePlanClick(event, node)
+      }
+      return
+    }
+    if (['BILLING_PIN', 'PIN_ENTRY', 'PIN_SENT', 'PIN_REQUIRED'].includes(currentStage)) {
+      if (['CONFIRM-PIN', 'CONFIRM_PIN', 'VERIFY', 'VERIFY-OTP'].includes(action)) {
+        handleConfirm(event)
+      }
+      return
+    }
+    if (['AUTH_OTP', 'AUTHORIZATION_REQUIRED'].includes(currentStage)) {
+      if (['MANUAL-CHECK', 'MANUAL_CHECK', 'SEND', 'SEND-PIN', 'SEND_PIN'].includes(action)) {
+        handleAuthSend(event)
+      }
+      if (['CONFIRM-PIN', 'CONFIRM_PIN', 'VERIFY', 'VERIFY-OTP'].includes(action)) {
+        handleAuthVerify(event)
+      }
+    }
+  }
+
+  shadow.addEventListener('click', handleClick)
+  return () => {
+    shadow.removeEventListener('click', handleClick)
+  }
+}
+
+export {
+  isDcbFlowContext,
+  normalizeDcbStage,
+  normalizedOutcome,
+  pageForDcbOutcome,
+  resolvePurchaseType,
+  routeDcbResponse,
+  setupDcbBindings,
+}

@@ -1,0 +1,35 @@
+node_modules/
+frontend/node_modules/
+backend/node_modules/
+Frontend/node_modules/
+
+# Production / Build outputs
+frontend/dist/
+backend/dist/
+Frontend/dist/
+backend/*.tsbuildinfo
+frontend/playwright-report/
+frontend/test-results/
+
+# Environment files and secrets (strictly ignored)
+*.env*
+.env*
+.env
+deploy.env
+
+# Backups, uploads, and logs
+backend/uploads/
+backend/logs/
+safwap-server-backup/
+
+# Reports, documents & media
+*.xlsx
+*.xls
+*.xlsm
+*.xlsb
+*.pdf
+*.md
+
+# OS files
+.DS_Store
+Thumbs.db

@@ -1,0 +1,995 @@
+import { Client } from '@elastic/elasticsearch';
+import { Brackets } from 'typeorm';
+import { getDataSource, getRepository } from '../../database/index.js';
+import { VisitEvent } from '../../database/entities/visit-event.entity.js';
+import { Visit } from '../../database/entities/visit.entity.js';
+import { Campaign } from '../../database/entities/campaign.entity.js';
+import { Vendor } from '../../database/entities/vendor.entity.js';
+import getConfig from '../../config/configuration.js';
+import {
+  DEFAULT_TIMEZONE,
+  resolveRangeBounds,
+} from '../../common/zoned-day.js';
+import { otpConversionStats } from '../otp/helpers/conversion.js';
+import {
+  funnelTotalsFromRows,
+  parseCompareEvents,
+  pivotFunnelTimeSeries,
+} from './helpers/funnel-compare.js';
+
+export const createSearchService = () => {
+  const config = getConfig();
+  const enabled = Boolean(config.search?.enabled);
+  const indexName = config.search?.index || 'campaign_events';
+  const node = config.search?.node;
+
+  let client = enabled && node ? new Client({ node }) : null;
+  let connectionFailed = false;
+
+  // Elasticsearch is enabled only when client is initialized and connection is working.
+  const isEnabled = () => Boolean(client && !connectionFailed);
+
+  const ensureIndex = async () => {
+    if (!client) return;
+    const exists = await client.indices.exists({ index: indexName });
+    if (exists) return;
+    await client.indices.create({
+      index: indexName,
+      mappings: {
+        properties: {
+          campaignId: { type: 'integer' },
+          visitId: { type: 'integer' },
+          vendorId: { type: 'integer' },
+          affiliateId: { type: 'integer' },
+          clickId: { type: 'keyword' },
+          rcid: { type: 'keyword' },
+          vidRaw: { type: 'keyword' },
+          affRaw: { type: 'keyword' },
+          phoneMasked: { type: 'keyword' },
+          phone: { type: 'keyword' },
+          country: { type: 'keyword' },
+          operator: { type: 'keyword' },
+          pageType: { type: 'keyword' },
+          eventType: { type: 'keyword' },
+          status: { type: 'keyword' },
+          ip: { type: 'keyword' },
+          userAgent: { type: 'text' },
+          requestUrl: { type: 'keyword' },
+          responseStatus: { type: 'integer' },
+          success: { type: 'boolean' },
+          timestamp: { type: 'date' },
+        },
+      },
+    });
+  };
+
+  /** Best-effort: add new fields to an existing index mapping. */
+  const ensureMappingFields = async () => {
+    if (!client) return;
+    try {
+      await client.indices.putMapping({
+        index: indexName,
+        properties: {
+          rcid: { type: 'keyword' },
+          phone: { type: 'keyword' },
+          requestUrl: { type: 'keyword' },
+          responseStatus: { type: 'integer' },
+          success: { type: 'boolean' },
+        },
+      });
+    } catch (err) {
+      console.warn(`ES putMapping skipped: ${err.message}`);
+    }
+  };
+
+  const init = async () => {
+    if (!client) {
+      console.log(
+        'Elasticsearch disabled (ELASTICSEARCH_NODE not set). Database fallback active.',
+      );
+      return;
+    }
+    try {
+      await ensureIndex();
+      await ensureMappingFields();
+      console.log(`Elasticsearch ready. index=${indexName}`);
+    } catch (err) {
+      connectionFailed = true;
+      console.warn(
+        `Elasticsearch init failed (continuing with database fallback): ${err.message}`,
+      );
+    }
+  };
+
+  const escapeWildcard = (value) => {
+    return value.replace(/([\\*?])/g, '\\$1');
+  };
+
+  const maskPhone = (phone) => {
+    if (!phone) return undefined;
+    return String(phone).trim();
+  };
+
+  const buildQuery = (params) => {
+    const filter = [];
+    if (params.campaignId !== undefined) {
+      if (Array.isArray(params.campaignId)) {
+        if (params.campaignId.length > 0) {
+          filter.push({ terms: { campaignId: params.campaignId } });
+        } else {
+          filter.push({ terms: { campaignId: [-1] } });
+        }
+      } else {
+        filter.push({ term: { campaignId: params.campaignId } });
+      }
+    }
+    if (params.visitId !== undefined) {
+      filter.push({ term: { visitId: params.visitId } });
+    }
+    if (params.eventType) filter.push({ term: { eventType: params.eventType } });
+    if (params.status) filter.push({ term: { status: params.status } });
+    if (params.vendorId) filter.push({ term: { vendorId: params.vendorId } });
+    if (params.affiliateId)
+      filter.push({ term: { affiliateId: params.affiliateId } });
+    if (params.clickId) filter.push({ term: { clickId: params.clickId } });
+    if (params.rcid) filter.push({ term: { rcid: params.rcid } });
+    if (params.from || params.to) {
+      const { from, to } = resolveRangeBounds(params);
+      const range = {};
+      if (from) range.gte = from.toISOString();
+      if (to) range.lte = to.toISOString();
+      filter.push({ range: { timestamp: range } });
+    }
+    const must = [];
+    if (params.q) {
+      const escaped = escapeWildcard(params.q);
+      const keywordFields = [
+        'clickId',
+        'rcid',
+        'vidRaw',
+        'affRaw',
+        'phoneMasked',
+        'phone',
+        'ip',
+      ];
+      must.push({
+        bool: {
+          should: [
+            { match_phrase_prefix: { userAgent: params.q } },
+            ...keywordFields.map((field) => ({
+              wildcard: {
+                [field]: {
+                  value: `*${escaped}*`,
+                  case_insensitive: true,
+                },
+              },
+            })),
+          ],
+          minimum_should_match: 1,
+        },
+      });
+    }
+    return { bool: { filter, must } };
+  };
+
+  const indexEvent = async (doc) => {
+    if (!client || connectionFailed) return;
+    try {
+      await client.index({ index: indexName, document: doc });
+    } catch (err) {
+      console.warn(`indexEvent failed: ${err.message}`);
+    }
+  };
+
+  const applyDbFilters = (queryBuilder, params, options = {}) => {
+    if (Array.isArray(params.campaignId)) {
+      queryBuilder.where('visit.campaignId IN (:...campaignIds)', {
+        campaignIds: params.campaignId.length > 0 ? params.campaignId : [-1],
+      });
+    } else {
+      queryBuilder.where('visit.campaignId = :campaignId', {
+        campaignId: params.campaignId,
+      });
+    }
+
+    if (params.visitId !== undefined) {
+      queryBuilder.andWhere('event.visitId = :visitId', {
+        visitId: params.visitId,
+      });
+    }
+
+    if (params.eventType && !options.ignoreEventType) {
+      queryBuilder.andWhere('event.eventType = :eventType', {
+        eventType: params.eventType,
+      });
+    }
+    if (params.status) {
+      queryBuilder.andWhere('visit.visitStatus = :status', {
+        status: params.status,
+      });
+    }
+    if (params.vendorId) {
+      queryBuilder.andWhere('visit.vendorId = :vendorId', {
+        vendorId: params.vendorId,
+      });
+    }
+    if (params.affiliateId) {
+      queryBuilder.andWhere('visit.affiliateId = :affiliateId', {
+        affiliateId: params.affiliateId,
+      });
+    }
+    if (params.clickId) {
+      queryBuilder.andWhere('visit.clickId = :clickId', {
+        clickId: params.clickId,
+      });
+    }
+    if (params.rcid) {
+      queryBuilder.andWhere('visit.rcid = :rcid', {
+        rcid: params.rcid,
+      });
+    }
+    if (params.from || params.to) {
+      const { from, to } = resolveRangeBounds(params);
+      if (from) {
+        queryBuilder.andWhere('event.createdAt >= :from', { from });
+      }
+      if (to) {
+        queryBuilder.andWhere('event.createdAt <= :to', { to });
+      }
+    }
+
+    if (params.q) {
+      const dbQuery = params.q.replace(/\*/g, '_');
+      const searchLike = `%${dbQuery}%`;
+      queryBuilder.andWhere(
+        new Brackets((qb) => {
+          qb.where('visit.clickId LIKE :searchLike', { searchLike })
+            .orWhere('visit.rcid LIKE :searchLike', { searchLike })
+            .orWhere('visit.vidRaw LIKE :searchLike', { searchLike })
+            .orWhere('visit.affRaw LIKE :searchLike', { searchLike })
+            .orWhere('visit.phone LIKE :searchLike', { searchLike })
+            .orWhere('visit.campid LIKE :searchLike', { searchLike })
+            .orWhere('visit.trackingCampid LIKE :searchLike', { searchLike })
+            .orWhere('visit.ipAddress LIKE :searchLike', { searchLike })
+            .orWhere('visit.userAgent LIKE :searchLike', { searchLike });
+        }),
+      );
+    }
+  };
+
+  const applyVisitFilters = (queryBuilder, params) => {
+    if (Array.isArray(params.campaignId)) {
+      queryBuilder.where('visit.campaignId IN (:...campaignIds)', {
+        campaignIds: params.campaignId.length > 0 ? params.campaignId : [-1],
+      });
+    } else {
+      queryBuilder.where('visit.campaignId = :campaignId', {
+        campaignId: params.campaignId,
+      });
+    }
+
+    if (params.visitId !== undefined) {
+      queryBuilder.andWhere('visit.id = :visitId', { visitId: params.visitId });
+    }
+    if (params.vendorId) {
+      queryBuilder.andWhere('visit.vendorId = :vendorId', {
+        vendorId: params.vendorId,
+      });
+    }
+    if (params.affiliateId) {
+      queryBuilder.andWhere('visit.affiliateId = :affiliateId', {
+        affiliateId: params.affiliateId,
+      });
+    }
+    if (params.clickId) {
+      queryBuilder.andWhere('visit.clickId = :clickId', {
+        clickId: params.clickId,
+      });
+    }
+    if (params.rcid) {
+      queryBuilder.andWhere('visit.rcid = :rcid', { rcid: params.rcid });
+    }
+    if (params.from || params.to) {
+      const { from, to } = resolveRangeBounds(params);
+      if (from) queryBuilder.andWhere('visit.createdAt >= :from', { from });
+      if (to) queryBuilder.andWhere('visit.createdAt <= :to', { to });
+    }
+    if (params.eventType) {
+      queryBuilder.andWhere(
+        `EXISTS (
+          SELECT 1 FROM visit_events ve
+          WHERE ve.visit_id = visit.id AND ve.event_type = :eventType
+        )`,
+        { eventType: params.eventType },
+      );
+    }
+    if (params.status) {
+      queryBuilder.andWhere('visit.visitStatus = :status', {
+        status: params.status,
+      });
+    }
+    if (params.q) {
+      const dbQuery = params.q.replace(/\*/g, '_');
+      const searchLike = `%${dbQuery}%`;
+      queryBuilder.andWhere(
+        new Brackets((qb) => {
+          qb.where('visit.clickId LIKE :searchLike', { searchLike })
+            .orWhere('visit.rcid LIKE :searchLike', { searchLike })
+            .orWhere('visit.vidRaw LIKE :searchLike', { searchLike })
+            .orWhere('visit.affRaw LIKE :searchLike', { searchLike })
+            .orWhere('visit.phone LIKE :searchLike', { searchLike })
+            .orWhere('visit.campid LIKE :searchLike', { searchLike })
+            .orWhere('visit.trackingCampid LIKE :searchLike', { searchLike })
+            .orWhere('visit.ipAddress LIKE :searchLike', { searchLike })
+            .orWhere('visit.userAgent LIKE :searchLike', { searchLike });
+        }),
+      );
+    }
+  };
+
+  const searchSessionsFromDb = async (params) => {
+    const page = Math.max(1, params.page || 1);
+    const size = Math.min(200, Math.max(1, params.size || 25));
+
+    const queryBuilder = getRepository(Visit).createQueryBuilder('visit');
+    applyVisitFilters(queryBuilder, params);
+
+    queryBuilder
+      .orderBy('visit.updatedAt', 'DESC')
+      .addOrderBy('visit.id', 'DESC')
+      .skip((page - 1) * size)
+      .take(size);
+
+    const [visits, total] = await queryBuilder.getManyAndCount();
+    const ids = visits.map((v) => v.id).filter(Boolean);
+
+    const eventCountByVisit = new Map();
+    const lastEventByVisit = new Map();
+    if (ids.length > 0) {
+      const counts = await getRepository(VisitEvent)
+        .createQueryBuilder('e')
+        .select('e.visitId', 'visitId')
+        .addSelect('COUNT(e.id)', 'cnt')
+        .where('e.visitId IN (:...ids)', { ids })
+        .groupBy('e.visitId')
+        .getRawMany();
+      for (const row of counts) {
+        eventCountByVisit.set(Number(row.visitId), Number(row.cnt) || 0);
+      }
+
+      const dbType = getDataSource().options.type;
+      if (dbType === 'postgres') {
+        const lasts = await getRepository(VisitEvent)
+          .createQueryBuilder('e')
+          .distinctOn(['e.visitId'])
+          .where('e.visitId IN (:...ids)', { ids })
+          .orderBy('e.visitId', 'ASC')
+          .addOrderBy('e.createdAt', 'DESC')
+          .getMany();
+        for (const e of lasts) {
+          lastEventByVisit.set(e.visitId, e.eventType);
+        }
+      } else {
+        for (const id of ids) {
+          const last = await getRepository(VisitEvent).findOne({
+            where: { visitId: id },
+            order: { createdAt: 'DESC' },
+          });
+          if (last) lastEventByVisit.set(id, last.eventType);
+        }
+      }
+    }
+
+    const items = visits.map((visit) => ({
+      campaignId: visit.campaignId,
+      visitId: visit.id,
+      vendorId: visit.vendorId,
+      affiliateId: visit.affiliateId,
+      clickId: visit.clickId,
+      rcid: visit.rcid,
+      campid: visit.campid || null,
+      trackingCampid: visit.trackingCampid || null,
+      vidRaw: visit.vidRaw,
+      affRaw: visit.affRaw,
+      phoneMasked: maskPhone(visit.phone),
+      phone: visit.phone || null,
+      country: visit.country,
+      operator: visit.operator,
+      pageType: visit.pageType,
+      eventType: lastEventByVisit.get(visit.id) || null,
+      eventCount: eventCountByVisit.get(visit.id) || 0,
+      status: visit.visitStatus,
+      ip: visit.ipAddress,
+      userAgent: visit.userAgent,
+      timestamp: (visit.updatedAt || visit.createdAt)?.toISOString?.()
+        || visit.updatedAt
+        || visit.createdAt,
+      view: 'sessions',
+    }));
+
+    return { total, page, size, items, view: 'sessions' };
+  };
+
+  const searchFromDb = async (params) => {
+    if (params.view === 'sessions') {
+      return searchSessionsFromDb(params);
+    }
+
+    const page = Math.max(1, params.page || 1);
+    const size = Math.min(200, Math.max(1, params.size || 25));
+
+    const queryBuilder = getRepository(VisitEvent)
+      .createQueryBuilder('event')
+      .leftJoinAndSelect('event.visit', 'visit');
+
+    applyDbFilters(queryBuilder, params);
+
+    queryBuilder
+      .orderBy('event.createdAt', 'DESC')
+      .skip((page - 1) * size)
+      .take(size);
+
+    const [events, total] = await queryBuilder.getManyAndCount();
+
+    const items = events.map((event) => ({
+      campaignId: event.visit?.campaignId,
+      visitId: event.visitId,
+      vendorId: event.visit?.vendorId,
+      affiliateId: event.visit?.affiliateId,
+      clickId: event.visit?.clickId,
+      rcid: event.visit?.rcid,
+      campid: event.visit?.campid || null,
+      trackingCampid: event.visit?.trackingCampid || null,
+      vidRaw: event.visit?.vidRaw,
+      affRaw: event.visit?.affRaw,
+      phoneMasked: maskPhone(event.visit?.phone),
+      phone: event.visit?.phone || null,
+      country: event.visit?.country,
+      operator: event.visit?.operator,
+      pageType: event.visit?.pageType,
+      eventType: event.eventType,
+      status: event.visit?.visitStatus,
+      ip: event.visit?.ipAddress,
+      userAgent: event.visit?.userAgent,
+      timestamp: event.createdAt.toISOString(),
+      view: 'events',
+    }));
+
+    return { total, page, size, items, view: 'events' };
+  };
+
+  const search = async (params) => {
+    const page = Math.max(1, params.page || 1);
+    const size = Math.min(200, Math.max(1, params.size || 25));
+    const view = params.view === 'sessions' ? 'sessions' : 'events';
+
+    // Sessions = one row per visit; always use DB for accurate unique counts.
+    if (view === 'sessions') {
+      return searchSessionsFromDb(params);
+    }
+
+    if (client && !connectionFailed) {
+      try {
+        const res = await client.search({
+          index: indexName,
+          from: (page - 1) * size,
+          size,
+          sort: [{ timestamp: { order: 'desc' } }],
+          query: buildQuery(params),
+        });
+        const totalValue =
+          typeof res.hits.total === 'number'
+            ? res.hits.total
+            : res.hits.total?.value || 0;
+        return {
+          total: totalValue,
+          page,
+          size,
+          view: 'events',
+          items: res.hits.hits.map((h) => h._source),
+        };
+      } catch (err) {
+        connectionFailed = true;
+      }
+    }
+
+    return searchFromDb({ ...params, view: 'events' });
+  };
+
+  const resolveInterval = (params) => {
+    if (params.interval === 'hour' || params.interval === 'day') {
+      return params.interval;
+    }
+    if (params.from && params.to && params.from === params.to) return 'hour';
+    return 'day';
+  };
+
+  const getUtcOffsetString = (timeZone, at = new Date()) => {
+    try {
+      for (const name of ['longOffset', 'shortOffset']) {
+        const parts = new Intl.DateTimeFormat('en-US', {
+          timeZone,
+          timeZoneName: name,
+          hour: '2-digit',
+        }).formatToParts(at);
+        const tzName = parts.find((p) => p.type === 'timeZoneName')?.value || '';
+        if (!tzName) continue;
+        if (tzName === 'GMT' || tzName === 'UTC') return '+00:00';
+        const match = tzName.match(/GMT([+-])(\d{1,2})(?::?(\d{2}))?/i);
+        if (match) {
+          const sign = match[1];
+          const hours = String(parseInt(match[2], 10)).padStart(2, '0');
+          const mins = (match[3] || '00').padStart(2, '0');
+          return `${sign}${hours}:${mins}`;
+        }
+      }
+      const utc = new Date(at.toLocaleString('en-US', { timeZone: 'UTC' }));
+      const local = new Date(at.toLocaleString('en-US', { timeZone }));
+      const offsetMin = Math.round((local.getTime() - utc.getTime()) / 60000);
+      const sign = offsetMin >= 0 ? '+' : '-';
+      const abs = Math.abs(offsetMin);
+      return `${sign}${String(Math.floor(abs / 60)).padStart(2, '0')}:${String(abs % 60).padStart(2, '0')}`;
+    } catch {
+      return '+00:00';
+    }
+  };
+
+  const jsonBoolSql = (columnJsonPath, jsonKey) => {
+    const dbType = getDataSource().options.type;
+    if (dbType === 'postgres') {
+      return `(${columnJsonPath}->>'${jsonKey}') IN ('true', 't', '1')`;
+    }
+    if (dbType === 'sqlite' || dbType === 'better-sqlite3') {
+      return `json_extract(${columnJsonPath}, '$.${jsonKey}') IN (1, 'true', 't')`;
+    }
+    return `JSON_EXTRACT(${columnJsonPath}, '$.${jsonKey}') IN (true, 1, 'true')`;
+  };
+
+  const otpStatsFromDb = async (params) => {
+    const successTrue = jsonBoolSql('event.metadata', 'success');
+    const heldTrue = jsonBoolSql('event.metadata', 'held');
+    const qb = getRepository(VisitEvent)
+      .createQueryBuilder('event')
+      .leftJoin('event.visit', 'visit')
+      .select(
+        `COALESCE(SUM(CASE WHEN event.event_type = 'OTP_SEND' AND ${successTrue} THEN 1 ELSE 0 END), 0)`,
+        'requested',
+      )
+      .addSelect(
+        `COALESCE(SUM(CASE WHEN event.event_type = 'OTP_VERIFY' AND ${successTrue} THEN 1 ELSE 0 END), 0)`,
+        'liveVerified',
+      )
+      .addSelect(
+        `COALESCE(SUM(CASE WHEN event.event_type = 'OTP_VERIFY' AND ${heldTrue} THEN 1 ELSE 0 END), 0)`,
+        'held',
+      );
+    applyDbFilters(qb, params, { ignoreEventType: true });
+    const row = await qb.getRawOne();
+    return otpConversionStats({
+      requested: row?.requested,
+      liveVerified: row?.liveVerified,
+      held: row?.held,
+    });
+  };
+
+  const buildEventDateSelect = (interval, timeZone) => {
+    const dbType = getDataSource().options.type;
+    const offset = getUtcOffsetString(timeZone);
+    if (dbType === 'postgres') {
+      const fmt = interval === 'hour' ? 'YYYY-MM-DD"T"HH24:00:00' : 'YYYY-MM-DD';
+      return `TO_CHAR(timezone('${timeZone.replace(/'/g, "''")}', event.createdAt AT TIME ZONE 'UTC'), '${fmt}')`;
+    }
+    if (dbType === 'sqlite' || dbType === 'better-sqlite3') {
+      const fmt = interval === 'hour' ? '%Y-%m-%dT%H:00:00' : '%Y-%m-%d';
+      return `strftime('${fmt}', event.createdAt)`;
+    }
+    const fmt = interval === 'hour' ? '%Y-%m-%dT%H:00:00' : '%Y-%m-%d';
+    return `DATE_FORMAT(CONVERT_TZ(event.createdAt, '+00:00', '${offset}'), '${fmt}')`;
+  };
+
+  const funnelCompareFromDb = async (params, interval, timeZone) => {
+    const compareEvents = parseCompareEvents(params.compareEvents);
+    const dateSelect = buildEventDateSelect(interval, timeZone);
+    const qb = getRepository(VisitEvent)
+      .createQueryBuilder('event')
+      .leftJoin('event.visit', 'visit')
+      .select(dateSelect, 'groupkey')
+      .addSelect('event.eventType', 'eventType')
+      .addSelect('COUNT(event.id)', 'count');
+    applyDbFilters(qb, params, { ignoreEventType: true });
+    qb.andWhere('event.eventType IN (:...funnelEvents)', {
+      funnelEvents: compareEvents,
+    })
+      .groupBy('groupkey')
+      .addGroupBy('event.eventType')
+      .orderBy('groupkey', 'ASC');
+    const raw = await qb.getRawMany();
+    return {
+      compareEvents,
+      timeSeriesByEvent: pivotFunnelTimeSeries(raw, compareEvents),
+      funnelTotals: funnelTotalsFromRows(raw, compareEvents),
+    };
+  };
+
+  const aggregationsFromDb = async (
+    params,
+    interval = 'day',
+    timeZone = 'UTC',
+  ) => {
+    const buildBaseQuery = (selectKey, alias = 'groupkey') => {
+      const qb = getRepository(VisitEvent)
+        .createQueryBuilder('event')
+        .leftJoin('event.visit', 'visit')
+        .select(selectKey, alias)
+        .addSelect('COUNT(event.id)', 'count');
+      applyDbFilters(qb, params);
+      return qb;
+    };
+
+    const byEventTypeRaw = await buildBaseQuery('event.eventType')
+      .groupBy('event.eventType')
+      .orderBy('count', 'DESC')
+      .limit(30)
+      .getRawMany();
+
+    const byVendorRaw = await buildBaseQuery('visit.vendorId')
+      .groupBy('visit.vendorId')
+      .orderBy('count', 'DESC')
+      .limit(20)
+      .getRawMany();
+
+    const byAffiliateRaw = await buildBaseQuery('visit.affiliateId')
+      .groupBy('visit.affiliateId')
+      .orderBy('count', 'DESC')
+      .limit(20)
+      .getRawMany();
+
+    const byStatusRaw = await buildBaseQuery('visit.visitStatus')
+      .groupBy('visit.visitStatus')
+      .orderBy('count', 'DESC')
+      .limit(20)
+      .getRawMany();
+
+    const dateSelect = buildEventDateSelect(interval, timeZone);
+
+    const timeSeriesRaw = await buildBaseQuery(dateSelect)
+      .groupBy('groupkey')
+      .orderBy('groupkey', 'ASC')
+      .getRawMany();
+
+    const formatBuckets = (rawList) =>
+      rawList.map((row) => ({
+        key: row.groupkey === null ? 'null' : String(row.groupkey),
+        count: Number(row.count),
+      }));
+
+    const funnel = await funnelCompareFromDb(params, interval, timeZone);
+
+    return {
+      enabled: true,
+      interval,
+      timeSeries: formatBuckets(timeSeriesRaw),
+      byEventType: formatBuckets(byEventTypeRaw),
+      byVendor: formatBuckets(byVendorRaw),
+      byAffiliate: formatBuckets(byAffiliateRaw),
+      byStatus: formatBuckets(byStatusRaw),
+      timeSeriesByEvent: funnel.timeSeriesByEvent,
+      funnelTotals: funnel.funnelTotals,
+      compareEvents: funnel.compareEvents,
+      otpStats: await otpStatsFromDb(params),
+    };
+  };
+
+  const aggregations = async (params) => {
+    const interval = resolveInterval(params);
+    let timeZone = params.timezone || DEFAULT_TIMEZONE;
+    if (timeZone === 'Asia/Calcutta') {
+      timeZone = 'Asia/Kolkata';
+    }
+
+    if (client && !connectionFailed) {
+      try {
+        const res = await client.search({
+          index: indexName,
+          size: 0,
+          query: buildQuery(params),
+          aggs: {
+            timeSeries: {
+              date_histogram: {
+                field: 'timestamp',
+                calendar_interval: interval,
+                time_zone: timeZone,
+                min_doc_count: 0,
+              },
+            },
+            byEventType: { terms: { field: 'eventType', size: 30 } },
+            byVendor: { terms: { field: 'vendorId', size: 20 } },
+            byAffiliate: { terms: { field: 'affiliateId', size: 20 } },
+            byStatus: { terms: { field: 'status', size: 20 } },
+          },
+        });
+        const aggs = res.aggregations || {};
+        const buckets = (key) =>
+          (aggs[key]?.buckets || []).map((b) => ({
+            key: b.key_as_string ?? b.key,
+            count: b.doc_count,
+          }));
+        const funnel = await funnelCompareFromDb(params, interval, timeZone);
+        return {
+          enabled: true,
+          interval,
+          timeSeries: buckets('timeSeries'),
+          byEventType: buckets('byEventType'),
+          byVendor: buckets('byVendor'),
+          byAffiliate: buckets('byAffiliate'),
+          byStatus: buckets('byStatus'),
+          timeSeriesByEvent: funnel.timeSeriesByEvent,
+          funnelTotals: funnel.funnelTotals,
+          compareEvents: funnel.compareEvents,
+          otpStats: await otpStatsFromDb(params),
+        };
+      } catch (err) {
+        connectionFailed = true;
+        console.warn(
+          `Elasticsearch aggregations failed, falling back to SQL database: ${err.message}`,
+        );
+      }
+    }
+
+    return aggregationsFromDb(params, interval, timeZone);
+  };
+
+  const exportLogs = async (params, format, res) => {
+    const campaignRepo = getRepository(Campaign);
+    const vendorRepo = getRepository(Vendor);
+
+    const [allCampaigns, allVendors] = await Promise.all([
+      campaignRepo.find({ select: ['id', 'name', 'country', 'operator'] }),
+      vendorRepo.find({ select: ['id', 'name', 'code'] }),
+    ]);
+
+    const campaignMap = new Map();
+    allCampaigns.forEach((c) => {
+      campaignMap.set(c.id, c.name || `${c.country} / ${c.operator}`);
+    });
+
+    const vendorMap = new Map();
+    allVendors.forEach((v) => {
+      vendorMap.set(v.id, v.name ? `${v.name} (${v.code})` : v.code);
+    });
+
+    const queryBuilder = getRepository(Visit).createQueryBuilder('visit');
+    applyVisitFilters(queryBuilder, params);
+
+    queryBuilder
+      .orderBy('visit.createdAt', 'DESC')
+      .addOrderBy('visit.id', 'DESC')
+      .take(100000);
+
+    const visits = await queryBuilder.getMany();
+    const ids = visits.map((v) => v.id).filter(Boolean);
+
+    const eventCountByVisit = new Map();
+    const lastEventByVisit = new Map();
+    const chunkSize = 2000;
+    for (let i = 0; i < ids.length; i += chunkSize) {
+      const chunk = ids.slice(i, i + chunkSize);
+      const counts = await getRepository(VisitEvent)
+        .createQueryBuilder('e')
+        .select('e.visitId', 'visitId')
+        .addSelect('COUNT(e.id)', 'cnt')
+        .where('e.visitId IN (:...chunk)', { chunk })
+        .groupBy('e.visitId')
+        .getRawMany();
+      for (const row of counts) {
+        eventCountByVisit.set(Number(row.visitId), Number(row.cnt) || 0);
+      }
+
+      const dbType = getDataSource().options.type;
+      if (dbType === 'postgres') {
+        const lasts = await getRepository(VisitEvent)
+          .createQueryBuilder('e')
+          .distinctOn(['e.visitId'])
+          .where('e.visitId IN (:...chunk)', { chunk })
+          .orderBy('e.visitId', 'ASC')
+          .addOrderBy('e.createdAt', 'DESC')
+          .getMany();
+        for (const e of lasts) {
+          lastEventByVisit.set(e.visitId, e.eventType);
+        }
+      } else {
+        for (const id of chunk) {
+          const last = await getRepository(VisitEvent).findOne({
+            where: { visitId: id },
+            order: { createdAt: 'DESC' },
+          });
+          if (last) lastEventByVisit.set(id, last.eventType);
+        }
+      }
+    }
+
+    const tz = params.timezone || 'Asia/Kolkata';
+    const formatLocalTime = (date) => {
+      if (!date) return '';
+      try {
+        const d = date instanceof Date ? date : new Date(date);
+        return new Intl.DateTimeFormat('sv-SE', {
+          timeZone: tz,
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit',
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit',
+        }).format(d);
+      } catch {
+        return (date.toISOString ? date.toISOString() : String(date)).replace('T', ' ').substring(0, 19);
+      }
+    };
+
+    const rows = visits.map((visit) => {
+      const eventType = lastEventByVisit.get(visit.id) || '';
+      const eventCount = eventCountByVisit.get(visit.id) || 0;
+      const campaignName = campaignMap.get(visit.campaignId) || (visit.campaignId ? `Campaign #${visit.campaignId}` : '');
+      const vendorName = vendorMap.get(visit.vendorId) || visit.vidRaw || '';
+      const localTime = formatLocalTime(visit.createdAt || visit.updatedAt);
+      const utcTime = (visit.createdAt || visit.updatedAt)?.toISOString?.() || '';
+
+      return {
+        visitId: visit.id,
+        clickId: visit.clickId || '',
+        rcid: visit.rcid || '',
+        localTime,
+        utcTime,
+        campaignId: visit.campaignId || '',
+        campaignName,
+        country: visit.country || '',
+        operator: visit.operator || '',
+        vendorId: visit.vendorId || '',
+        vendorName,
+        campid: visit.campid || '',
+        trackingCampid: visit.trackingCampid || '',
+        phone: visit.phone || '',
+        lastEvent: eventType,
+        eventCount,
+        status: visit.visitStatus || '',
+        ip: visit.ipAddress || '',
+        userAgent: visit.userAgent || '',
+      };
+    });
+
+    const timestampStr = new Date().toISOString().replace(/[:.]/g, '-');
+    const filenameBase = `campaign-logs-${Array.isArray(params.campaignId) ? 'all' : params.campaignId || 'all'}-${timestampStr}`;
+
+    if (format === 'xlsx') {
+      const ExcelJS = (await import('exceljs')).default;
+      const workbook = new ExcelJS.Workbook();
+      workbook.creator = 'TemplateCraft';
+      const sheet = workbook.addWorksheet('Campaign Logs');
+
+      sheet.columns = [
+        { header: 'Visit ID', key: 'visitId', width: 12 },
+        { header: 'Click ID', key: 'clickId', width: 28 },
+        { header: 'RCID', key: 'rcid', width: 36 },
+        { header: `Time (${tz})`, key: 'localTime', width: 20 },
+        { header: 'UTC Time', key: 'utcTime', width: 24 },
+        { header: 'Campaign ID', key: 'campaignId', width: 14 },
+        { header: 'Campaign Name', key: 'campaignName', width: 24 },
+        { header: 'Country', key: 'country', width: 16 },
+        { header: 'Operator', key: 'operator', width: 16 },
+        { header: 'Vendor ID', key: 'vendorId', width: 12 },
+        { header: 'Vendor Name', key: 'vendorName', width: 20 },
+        { header: 'Campid', key: 'campid', width: 16 },
+        { header: 'Tracking Campid', key: 'trackingCampid', width: 18 },
+        { header: 'MSISDN', key: 'phone', width: 18 },
+        { header: 'Last Event', key: 'lastEvent', width: 18 },
+        { header: 'Event Count', key: 'eventCount', width: 12 },
+        { header: 'Status', key: 'status', width: 16 },
+        { header: 'IP Address', key: 'ip', width: 18 },
+        { header: 'User Agent', key: 'userAgent', width: 40 },
+      ];
+
+      sheet.getRow(1).font = { bold: true };
+      sheet.getRow(1).fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: 'FFE0E7FF' },
+      };
+
+      rows.forEach((row) => sheet.addRow(row));
+
+      res.setHeader(
+        'Content-Type',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      );
+      res.setHeader(
+        'Content-Disposition',
+        `attachment; filename="${filenameBase}.xlsx"`,
+      );
+      const buffer = await workbook.xlsx.writeBuffer();
+      return res.send(Buffer.from(buffer));
+    }
+
+    const headers = [
+      'Visit ID',
+      'Click ID',
+      'RCID',
+      `Time (${tz})`,
+      'UTC Time',
+      'Campaign ID',
+      'Campaign Name',
+      'Country',
+      'Operator',
+      'Vendor ID',
+      'Vendor Name',
+      'Campid',
+      'Tracking Campid',
+      'MSISDN',
+      'Last Event',
+      'Event Count',
+      'Status',
+      'IP Address',
+      'User Agent',
+    ];
+
+    const escapeCsv = (val) => {
+      if (val === null || val === undefined) return '';
+      const str = String(val);
+      if (
+        str.includes(',') ||
+        str.includes('"') ||
+        str.includes('\n') ||
+        str.includes('\r')
+      ) {
+        return `"${str.replace(/"/g, '""')}"`;
+      }
+      return str;
+    };
+
+    let csvContent = '\uFEFF' + headers.map(escapeCsv).join(',') + '\r\n';
+    for (const r of rows) {
+      const line = [
+        r.visitId,
+        r.clickId,
+        r.rcid,
+        r.localTime,
+        r.utcTime,
+        r.campaignId,
+        r.campaignName,
+        r.country,
+        r.operator,
+        r.vendorId,
+        r.vendorName,
+        r.campid,
+        r.trackingCampid,
+        r.phone,
+        r.lastEvent,
+        r.eventCount,
+        r.status,
+        r.ip,
+        r.userAgent,
+      ]
+        .map(escapeCsv)
+        .join(',');
+      csvContent += line + '\r\n';
+    }
+
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${filenameBase}.csv"`,
+    );
+    return res.send(csvContent);
+  };
+
+  return {
+    isEnabled,
+    init,
+    indexEvent,
+    search,
+    aggregations,
+    exportLogs,
+  };
+};
+
+export const searchService = createSearchService();

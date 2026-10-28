@@ -1,0 +1,73 @@
+import { CampaignPageType } from '../../../database/entities/campaign-page.entity.js';
+import {
+  edge,
+  node,
+  outcomeNode,
+} from './graph.js';
+
+/**
+ * Orange Burkina Faso Flow Definition.
+ *
+ * Multi-step French VAS Flow:
+ * - HOME: MSISDN entry (+226)
+ * - CONFIRM: Plan details (50 FCFA/day) & S'abonner (send OTP)
+ * - OTP: 4-digit SMS OTP verification
+ * - THANKYOU: Confirmation / Success screen
+ */
+export default {
+  id: 'ORANGE_BF',
+  allowsHe: false,
+  startConfig: {
+    runHe: false,
+    runBlocklist: true,
+    runChecksub: true,
+  },
+  isNullIdentity: false,
+  isLandingCg: false,
+  isSubscribeCg: false,
+  allowsApiExpose: true,
+  requiresOtpNode: true,
+  skipReachableValidate: false,
+  useDcbDummyPages: false,
+  needsIspResolve: false,
+  isFlowLocked: true,
+  conversionRule: 'otp_payout',
+  wapBlockedMessage: 'This service is only available for Orange Burkina Faso subscribers (+226).',
+
+  getDefaultFlowConfig() {
+    return {
+      version: 1,
+      entryPage: CampaignPageType.HOME,
+      startConfig: { ...this.startConfig },
+      nodes: [
+        node(CampaignPageType.HOME, 200, 180),
+        node(CampaignPageType.CONFIRM, 460, 180),
+        node(CampaignPageType.OTP, 720, 180),
+        node(CampaignPageType.THANKYOU, 980, 180),
+        node(CampaignPageType.BLOCKED, 980, 300),
+        node(CampaignPageType.ERROR, 980, 420),
+      ],
+      edges: [
+        edge(CampaignPageType.HOME, CampaignPageType.CONFIRM, 'SUBSCRIBE'),
+        edge(CampaignPageType.HOME, CampaignPageType.CONFIRM, 'DEFAULT'),
+        edge(CampaignPageType.CONFIRM, CampaignPageType.OTP, 'OTP_SENT'),
+        edge(CampaignPageType.CONFIRM, CampaignPageType.OTP, 'DEFAULT'),
+        edge(CampaignPageType.CONFIRM, CampaignPageType.THANKYOU, 'ACTIVE_SUBSCRIBER'),
+        edge(CampaignPageType.OTP, CampaignPageType.THANKYOU, 'OTP_VERIFIED'),
+        edge(CampaignPageType.OTP, CampaignPageType.BLOCKED, 'BLOCKED'),
+        edge(CampaignPageType.OTP, CampaignPageType.ERROR, 'ERROR'),
+      ],
+    };
+  },
+
+  resolveHomeSubscribeNext({ resolvedPhone } = {}) {
+    return {
+      nextPage: CampaignPageType.CONFIRM,
+      resolvedPhone,
+    };
+  },
+
+  async guardConfirmThankYou(ctx = {}) {
+    return ctx.resolvedPageType || CampaignPageType.THANKYOU;
+  },
+};

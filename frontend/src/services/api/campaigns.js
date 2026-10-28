@@ -1,0 +1,324 @@
+import { apiClient } from './client'
+
+export const PAGE_TYPES = [
+  'HOME',
+  'OTP',
+  'CONFIRM',
+  'THANKYOU',
+  'INPROGRESS',
+  'LOW_BALANCE',
+  'BLOCKED',
+  'ERROR',
+]
+
+export const PAGE_TYPE_LABELS = {
+  HOME: 'Home',
+  OTP: 'OTP',
+  CONFIRM: 'Confirm',
+  THANKYOU: 'Thank you',
+  INPROGRESS: 'In progress',
+  LOW_BALANCE: 'Low balance',
+  BLOCKED: 'Blocked',
+  ERROR: 'Error',
+  API_EXPOSE: 'API expose',
+}
+
+export const REQUIRED_PAGE_TYPES = ['HOME', 'OTP', 'CONFIRM', 'THANKYOU']
+
+/** Status / outcome pages — optional for go-live but always editable per campaign. */
+export const OPTIONAL_PAGE_TYPES = ['INPROGRESS', 'LOW_BALANCE', 'BLOCKED', 'ERROR']
+
+function mapCampaign(campaign) {
+  if (!campaign) return null
+  const pages = (campaign.pages || []).map((page) => ({
+    id: page.id,
+    pageType: page.pageType,
+    templateId: page.templateId,
+    hasContent: Boolean(
+      page.template?.data?.html &&
+        (page.template.data.html === '[saved]' || String(page.template.data.html).trim().length > 0),
+    ),
+    updatedAt: page.updatedAt,
+  }))
+
+  let flowConfig = null
+  const rawFlowConfig = campaign.flowConfig || campaign.flow_config
+  if (rawFlowConfig) {
+    try {
+      flowConfig = typeof rawFlowConfig === 'string' ? JSON.parse(rawFlowConfig) : rawFlowConfig
+    } catch (e) {
+      console.error('Failed to parse flowConfig', e)
+    }
+  }
+
+  // Dynamic required complete validation based on flowConfig active page types
+  const activePageTypes = flowConfig && flowConfig.nodes
+    ? flowConfig.nodes.map((n) => n.pageType)
+    : REQUIRED_PAGE_TYPES;
+
+  const requiredComplete = activePageTypes.every((type) =>
+    pages.find((p) => p.pageType === type)?.hasContent,
+  )
+
+  const countryCode = campaign.marketOperator?.country?.code || campaign.countryCode || null
+  const operatorCode = campaign.marketOperator?.code || campaign.operatorCode || null
+  const trackingId =
+    campaign.trackingId ||
+    (countryCode && operatorCode
+      ? `${String(countryCode).toUpperCase()}-${String(operatorCode).toUpperCase()}-${campaign.id}`
+      : null)
+
+  return {
+    id: String(campaign.id),
+    name: campaign.name,
+    country: campaign.country,
+    operator: campaign.operator,
+    countryCode,
+    operatorCode,
+    operatorId: campaign.operatorId ?? campaign.marketOperator?.id ?? null,
+    trackingId,
+    serviceId: campaign.serviceId || '',
+    active: Boolean(campaign.active),
+    vendorId: campaign.vendorId ?? null,
+    verificationMode: campaign.verificationMode || null,
+    cgRedirectUrl: campaign.cgRedirectUrl || campaign.cg_redirect_url || null,
+    successRedirectUrl:
+      campaign.successRedirectUrl || campaign.success_redirect_url || null,
+    successRedirectMode:
+      String(campaign.successRedirectMode || campaign.success_redirect_mode || 'thankyou')
+        .toLowerCase() === 'immediate'
+        ? 'immediate'
+        : 'thankyou',
+    postbackRegisterAt: (() => {
+      const v = String(
+        campaign.postbackRegisterAt || campaign.postback_register_at || 'confirm',
+      ).toLowerCase()
+      return v === 'otp' || v === 'both' ? v : 'confirm'
+    })(),
+    funnelLayout: (() => {
+      const v = String(
+        campaign.funnelLayout || campaign.funnel_layout || 'classic',
+      ).toLowerCase()
+      return v === 'packs_on_home' ? 'packs_on_home' : 'classic'
+    })(),
+    allowedCallbackStatuses:
+      campaign.allowedCallbackStatuses || campaign.allowed_callback_statuses || null,
+    cappingEnabled: Boolean(
+      campaign.cappingEnabled ?? campaign.capping_enabled ?? false,
+    ),
+    cappingLimit:
+      (campaign.cappingLimit ?? campaign.capping_limit) != null
+        ? Number(campaign.cappingLimit ?? campaign.capping_limit)
+        : null,
+    cappingAction:
+      campaign.cappingAction || campaign.capping_action || 'stop',
+    fallbackCampaignId:
+      (campaign.fallbackCampaignId ?? campaign.fallback_campaign_id) != null
+        ? Number(campaign.fallbackCampaignId ?? campaign.fallback_campaign_id)
+        : null,
+    cappingInterval:
+      campaign.cappingInterval || campaign.capping_interval || 'daily',
+    pages,
+    requiredComplete,
+    flowConfig,
+    trackings: (campaign.trackings || []).map((t) => ({
+      ...t,
+      active: t.active !== false,
+      allowedCallbackStatuses:
+        t.allowedCallbackStatuses || t.allowed_callback_statuses || null,
+    })),
+    createdAt: campaign.createdAt,
+    updatedAt: campaign.updatedAt,
+  }
+}
+
+export { mapCampaign }
+
+function mapPageContent(page) {
+  const data = page?.template?.data || {}
+  return {
+    pageType: page.pageType,
+    templateId: page.templateId,
+    projectData: data.projectData || {},
+    html: data.html === '[saved]' ? '' : data.html || '',
+    css: data.css === '[saved]' ? '' : data.css || '',
+  }
+}
+
+export async function listCampaigns() {
+  const campaigns = await apiClient('/campaigns')
+  return (campaigns || []).map(mapCampaign).filter(Boolean)
+}
+
+export async function getCampaign(id) {
+  const campaign = await apiClient(`/campaigns/${id}`, { timeout: 45000 })
+  return mapCampaign(campaign)
+}
+
+export async function createCampaign(payload) {
+  const campaign = await apiClient('/campaigns', {
+    method: 'POST',
+    body: payload,
+    timeout: 60000,
+  })
+  return mapCampaign(campaign)
+}
+
+export async function updateCampaign(id, payload) {
+  const campaign = await apiClient(`/campaigns/${id}`, {
+    method: 'PATCH',
+    body: payload,
+    timeout: 45000,
+  })
+  return mapCampaign(campaign)
+}
+
+export async function deleteCampaign(id) {
+  await apiClient(`/campaigns/${id}`, { method: 'DELETE' })
+}
+
+export async function getCampaignPage(campaignId, pageType) {
+  const page = await apiClient(`/campaigns/${campaignId}/pages/${pageType}`)
+  return mapPageContent(page)
+}
+
+export async function saveCampaignPage(campaignId, pageType, payload) {
+  const page = await apiClient(`/campaigns/${campaignId}/pages/${pageType}`, {
+    method: 'PATCH',
+    body: payload,
+  })
+  return mapPageContent(page)
+}
+
+export async function getCampaignApiConfig(campaignId) {
+  return apiClient(`/campaigns/${campaignId}/api-config`)
+}
+
+export async function saveCampaignApiConfig(campaignId, payload) {
+  return apiClient(`/campaigns/${campaignId}/api-config`, {
+    method: 'PATCH',
+    body: payload,
+  })
+}
+
+export async function applyCampaignDefaults(id) {
+  const campaign = await apiClient(`/campaigns/${id}/apply-defaults`, { method: 'POST' })
+  return mapCampaign(campaign)
+}
+
+export function getCampaignPreviewUrl(campaign, options = {}) {
+  // No step= in Test URL — subscription boot picks entry page from campaign setup.
+  const params = new URLSearchParams({
+    country: campaign.country,
+    operator: campaign.operator,
+  })
+
+  if (campaign.trackingId) {
+    params.set('tracking_campid', campaign.trackingId)
+  } else if (campaign.id) {
+    params.set('tracking_campid', String(campaign.id))
+  }
+
+  if (campaign.trackings && campaign.trackings.length > 0) {
+    const t = campaign.trackings[0]
+    if (t.vendor?.code) params.set('vid', t.vendor.code)
+  }
+
+  // Only attach msisdn when the caller explicitly passes one (e.g. simulate HE).
+  // Never invent a dummy number — localhost HE will correctly return empty → OTP path.
+  if (options.msisdn) {
+    params.set('msisdn', String(options.msisdn))
+  }
+
+  return `/subscription?${params.toString()}`
+}
+
+/** Open live funnel preview for a specific campaign page (HOME, OTP, CONFIRM, …) */
+export function getCampaignPagePreviewUrl(campaign, pageType = 'HOME', options = {}) {
+  const params = new URLSearchParams({
+    country: campaign.country,
+    operator: campaign.operator,
+    step: pageType || 'HOME',
+  })
+
+  if (campaign.trackingId) {
+    params.set('tracking_campid', campaign.trackingId)
+  } else if (campaign.id) {
+    params.set('tracking_campid', String(campaign.id))
+  }
+
+  if (campaign.trackings && campaign.trackings.length > 0) {
+    const t = campaign.trackings[0]
+    if (t.vendor?.code) params.set('vid', t.vendor.code)
+  }
+
+  if (options.msisdn) {
+    params.set('msisdn', String(options.msisdn))
+  }
+
+  // Cache-busting timestamp so browser immediately loads freshly saved page content
+  params.set('_t', String(Date.now()))
+
+  return `/subscription?${params.toString()}`
+}
+
+export async function testSendOtp(payload) {
+  return apiClient('/otp/test-send', {
+    method: 'POST',
+    body: payload,
+  })
+}
+
+export async function testVerifyOtp(payload) {
+  return apiClient('/otp/test-verify', {
+    method: 'POST',
+    body: payload,
+  })
+}
+
+export async function testOrangeBfSync(payload) {
+  return apiClient('/otp/test-sync', {
+    method: 'POST',
+    body: payload,
+  })
+}
+
+export async function checkOtpProviderHealth(payload) {
+  return apiClient('/otp/health-check', {
+    method: 'POST',
+    body: payload,
+  })
+}
+
+export async function getCampaignFlow(campaignId) {
+  return apiClient(`/campaigns/${campaignId}/flow`)
+}
+
+export async function saveCampaignFlow(campaignId, payload) {
+  return apiClient(`/campaigns/${campaignId}/flow`, {
+    method: 'PUT',
+    body: payload,
+  })
+}
+
+export async function getCampaignVendorStats(campaignId, params = {}) {
+  const query = new URLSearchParams()
+  if (params.from) query.append('from', params.from)
+  if (params.to) query.append('to', params.to)
+  if (params.timezone) query.append('timezone', params.timezone)
+  const qStr = query.toString() ? `?${query.toString()}` : ''
+  return apiClient(`/analytics/campaign/${campaignId}/vendor-stats${qStr}`)
+}
+
+export async function getCampaignActivityLogs(campaignId, params = {}) {
+  const query = new URLSearchParams()
+  if (params.page) query.append('page', params.page)
+  if (params.limit) query.append('limit', params.limit)
+  if (params.phone) query.append('phone', params.phone)
+  if (params.status) query.append('status', params.status)
+
+  const queryString = query.toString()
+  const url = `/analytics/campaign/${campaignId}/logs${queryString ? `?${queryString}` : ''}`
+  return apiClient(url)
+}
+

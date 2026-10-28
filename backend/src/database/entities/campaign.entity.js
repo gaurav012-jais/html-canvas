@@ -1,0 +1,176 @@
+import { EntitySchema } from 'typeorm';
+
+export class Campaign {}
+
+export const CampaignSchema = new EntitySchema({
+  name: 'Campaign',
+  target: Campaign,
+  tableName: 'campaigns',
+  columns: {
+    id: {
+      primary: true,
+      type: 'int',
+      generated: true,
+    },
+    name: {
+      type: 'varchar',
+    },
+    country: {
+      type: 'varchar',
+    },
+    operator: {
+      type: 'varchar',
+    },
+    operatorId: {
+      name: 'operator_id',
+      type: 'int',
+      nullable: true,
+    },
+    serviceId: {
+      name: 'service_id',
+      type: 'varchar',
+      nullable: true,
+    },
+    active: {
+      type: 'boolean',
+      default: false,
+    },
+    userId: {
+      name: 'user_id',
+      type: 'int',
+    },
+    verificationMode: {
+      name: 'verification_mode',
+      type: 'varchar',
+      length: 16,
+      nullable: true,
+    },
+    flowConfig: {
+      name: 'flow_config',
+      type: 'text',
+      nullable: true,
+    },
+    cgRedirectUrl: {
+      name: 'cg_redirect_url',
+      type: 'varchar',
+      length: 1024,
+      nullable: true,
+    },
+    successRedirectUrl: {
+      name: 'success_redirect_url',
+      type: 'varchar',
+      length: 1024,
+      nullable: true,
+    },
+    /** thankyou = show THANKYOU then redirect; immediate = skip THANKYOU paint */
+    successRedirectMode: {
+      name: 'success_redirect_mode',
+      type: 'varchar',
+      length: 16,
+      default: 'thankyou',
+    },
+    /**
+     * When to queue conversion_postbacks pending:
+     * confirm | otp | both
+     */
+    postbackRegisterAt: {
+      name: 'postback_register_at',
+      type: 'varchar',
+      length: 16,
+      default: 'confirm',
+    },
+    /**
+     * classic = existing HOME CTA → OTP/CONFIRM graph
+     * packs_on_home = identity-before-HOME (mode matrix); OTP → HOME
+     */
+    funnelLayout: {
+      name: 'funnel_layout',
+      type: 'varchar',
+      length: 32,
+      default: 'classic',
+    },
+    allowedCallbackStatuses: {
+      name: 'allowed_callback_statuses',
+      type: 'text',
+      nullable: true,
+    },
+    cappingEnabled: {
+      name: 'capping_enabled',
+      type: 'boolean',
+      default: false,
+    },
+    cappingMetric: {
+      name: 'capping_metric',
+      type: 'varchar',
+      length: 16,
+      default: 'conversions',
+    },
+    cappingLimit: {
+      name: 'capping_limit',
+      type: 'int',
+      nullable: true,
+    },
+    cappingAction: {
+      name: 'capping_action',
+      type: 'varchar',
+      length: 16,
+      default: 'stop',
+    },
+    fallbackCampaignId: {
+      name: 'fallback_campaign_id',
+      type: 'int',
+      nullable: true,
+    },
+    cappingInterval: {
+      name: 'capping_interval',
+      type: 'varchar',
+      length: 16,
+      default: 'daily',
+    },
+    createdAt: {
+      name: 'created_at',
+      type: 'timestamp',
+      createDate: true,
+    },
+    updatedAt: {
+      name: 'updated_at',
+      type: 'timestamp',
+      updateDate: true,
+    },
+  },
+  relations: {
+    marketOperator: {
+      type: 'many-to-one',
+      target: 'Operator',
+      inverseSide: 'campaigns',
+      joinColumn: { name: 'operator_id' },
+      onDelete: 'SET NULL',
+      nullable: true,
+    },
+    user: {
+      type: 'many-to-one',
+      target: 'User',
+      joinColumn: { name: 'user_id' },
+      onDelete: 'CASCADE',
+    },
+    trackings: {
+      type: 'one-to-many',
+      target: 'CampaignTracking',
+      inverseSide: 'campaign',
+      // Managed only via campaign_trackings repo. Cascade+orphan-delete
+      // wiped assignments on Save flow / activate / rename.
+    },
+    pages: {
+      type: 'one-to-many',
+      target: 'CampaignPage',
+      inverseSide: 'campaign',
+    },
+  },
+  indices: [
+    {
+      name: 'IDX_CAMPAIGN_OPERATOR_NAME',
+      unique: true,
+      columns: ['operatorId', 'name'],
+    },
+  ],
+});
