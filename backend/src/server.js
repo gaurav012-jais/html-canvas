@@ -1,7 +1,6 @@
 process.env.TZ = 'UTC';
 import 'reflect-metadata';
 import { initDatabase } from './database/index.js';
-import { seedPrebuiltTemplates } from './database/seed/templates-seed.service.js';
 import { createApp } from './app.js';
 import getConfig from './config/configuration.js';
 import { searchService } from './modules/search/search.service.js';
@@ -16,9 +15,6 @@ const start = async () => {
     console.log('Initializing database connection...');
     await initDatabase();
     console.log('Database initialized successfully.');
-
-    // console.log('Seeding prebuilt templates...');
-    // await seedPrebuiltTemplates();
 
     await searchService.init();
     startAnalyticsScheduler();
