@@ -38,8 +38,17 @@ export const sanitizeSubscribeParam = (raw, max = 80) => {
 export const fillSubscribeTemplate = (template, vars = {}) => {
   let result = String(template || '');
   for (const [key, val] of Object.entries(vars)) {
-    result = result.split(`{{${key}}}`).join(val ?? '');
-    result = result.split(`{{$${key}}}`).join(val ?? '');
+    const value = val != null ? String(val) : '';
+    result = result.split(`{{${key}}}`).join(value);
+    result = result.split(`{{$${key}}}`).join(value);
+    result = result.split(`{${key}}`).join(value);
+    result = result.split(`#${key.toUpperCase()}#`).join(value);
+    result = result.split(`#${key.toLowerCase()}#`).join(value);
+  }
+  const androidId = vars.txid || vars.clickId || vars.visitId || '';
+  if (androidId) {
+    result = result.split('#ANDROIDID#').join(String(androidId));
+    result = result.split('#androidid#').join(String(androidId));
   }
   return result;
 };

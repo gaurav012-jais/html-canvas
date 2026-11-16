@@ -26,16 +26,20 @@ export function buildOtpExposeApiPayload({ origin, campaign, vendor, vendorId } 
   const urls = buildOtpExposeUrls(origin, cid, vid)
   return [
     {
-      comment: 'Step 1 — send OTP to this MSISDN. Use the same msisdn on verify.',
+      comment: 'Step 1 — send OTP to this MSISDN. Pass client IP, User-Agent, and your click/transaction ID.',
       method: 'POST',
       url: urls.sendUrl.replace(/\?.*$/, ''),
       request: {
         msisdn: SAMPLE_MSISDN,
+        ip: '185.22.33.44',
+        ua: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15',
+        txid: 'VENDOR_CLICK_12345',
         pack: 'daily',
       },
       response: {
         sent: true,
         visitId: 1,
+        clickId: 'e4d909c2-9014-4691-81d7-21a1f0a074c5',
         msisdn: SAMPLE_MSISDN,
         message: 'OTP sent successfully',
       },
@@ -47,10 +51,12 @@ export function buildOtpExposeApiPayload({ origin, campaign, vendor, vendorId } 
       request: {
         msisdn: SAMPLE_MSISDN,
         otp: '1234',
+        txid: 'VENDOR_CLICK_12345',
       },
       response: {
         verified: true,
         visitId: 1,
+        clickId: 'e4d909c2-9014-4691-81d7-21a1f0a074c5',
         msisdn: SAMPLE_MSISDN,
         message: 'OTP verified successfully',
       },
@@ -99,7 +105,7 @@ This specification describes the vendor-scoped One-Time Password (OTP) verificat
 
 ### 3.1 Send OTP
 \`POST ${sendBase}\`  
-Query format fallback: \`${urls.sendUrl}{msisdn}\`
+Query format fallback: \`${sendBase}?msisdn={msisdn}&ip={ip}&ua={ua}&txid={click_id}\`
 
 Dispatches an SMS verification code to the specified subscriber phone number.
 
@@ -111,19 +117,31 @@ Dispatches an SMS verification code to the specified subscriber phone number.
 - **Parameters / Body Schema:**
   | Parameter | Type | Required | Example | Description |
   |---|---|---|---|---|
-  | \`msisdn\` | string | Yes | \`566891023\` | Subscriber mobile phone number |
-  | \`pack\` | string | No | \`daily\` | Selected subscription plan key |
+  | \`msisdn\` | string | Yes | \`566891023\` | Subscriber mobile phone number (digits only or with country prefix) |
+  | \`ip\` | string | Recommended | \`185.22.33.44\` | Real subscriber / client IP address (used for telco validation & anti-fraud) |
+  | \`ua\` | string | Recommended | \`Mozilla/5.0...\` | User-Agent header of the subscriber's device / browser |
+  | \`txid\` / \`click_id\` | string | Recommended | \`VENDOR_CLICK_12345\` | Your click / transaction tracking ID (echoed back and used for CPA postback) |
+  | \`pack\` | string | No | \`daily\` | Selected subscription plan key (default: \`daily\`) |
   | \`visitId\` | number | No | \`1\` | Optional visit tracking identifier |
 
-#### cURL Example
+#### cURL Example (POST JSON)
 \`\`\`bash
 curl -X POST '${sendBase}' \\
   -H 'Content-Type: application/json' \\
   -H 'Accept: application/json' \\
   -d '{
     "msisdn": "566891023",
+    "ip": "185.22.33.44",
+    "ua": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15",
+    "txid": "VENDOR_CLICK_12345",
     "pack": "daily"
   }'
+\`\`\`
+
+#### Alternative cURL Example (GET Query Parameters)
+\`\`\`bash
+curl -X GET '${sendBase}?msisdn=566891023&ip=185.22.33.44&ua=Mozilla/5.0&txid=VENDOR_CLICK_12345' \\
+  -H 'Accept: application/json'
 \`\`\`
 
 #### Responses
@@ -134,6 +152,7 @@ SMS verification passcode dispatched successfully.
 {
   "sent": true,
   "visitId": 1,
+  "clickId": "e4d909c2-9014-4691-81d7-21a1f0a074c5",
   "msisdn": "566891023",
   "message": "OTP sent successfully"
 }
@@ -203,7 +222,7 @@ Failed to communicate with the upstream SMS aggregator or operator gateway.
 
 ### 3.2 Verify OTP
 \`POST ${verifyBase}\`  
-Query format fallback: \`${urls.verifyUrl}{msisdn}&otp={otp}\`
+Query format fallback: \`${verifyBase}?msisdn={msisdn}&otp={otp}&txid={click_id}\`
 
 Validates the OTP entered by the subscriber. Conversion is registered on success.
 
@@ -216,18 +235,28 @@ Validates the OTP entered by the subscriber. Conversion is registered on success
   | Parameter | Type | Required | Example | Description |
   |---|---|---|---|---|
   | \`msisdn\` | string | Yes | \`566891023\` | Same phone number used on send |
-  | \`otp\` | string | Yes | \`1234\` | Verification code entered by subscriber |
+  | \`otp\` | string | Yes | \`1234\` | Verification code entered by subscriber (also accepts \`pin\` or \`code\`) |
+  | \`txid\` / \`click_id\` | string | Recommended | \`VENDOR_CLICK_12345\` | Your click / transaction identifier |
+  | \`ip\` | string | Optional | \`185.22.33.44\` | Real subscriber / client IP address |
+  | \`ua\` | string | Optional | \`Mozilla/5.0...\` | User-Agent of the subscriber device |
   | \`visitId\` | number | No | \`1\` | Optional visit tracking identifier |
 
-#### cURL Example
+#### cURL Example (POST JSON)
 \`\`\`bash
 curl -X POST '${verifyBase}' \\
   -H 'Content-Type: application/json' \\
   -H 'Accept: application/json' \\
   -d '{
     "msisdn": "566891023",
-    "otp": "1234"
+    "otp": "1234",
+    "txid": "VENDOR_CLICK_12345"
   }'
+\`\`\`
+
+#### Alternative cURL Example (GET Query Parameters)
+\`\`\`bash
+curl -X GET '${verifyBase}?msisdn=566891023&otp=1234&txid=VENDOR_CLICK_12345' \\
+  -H 'Accept: application/json'
 \`\`\`
 
 #### Responses
@@ -238,6 +267,7 @@ OTP code is valid and verified. Vendor conversion is registered.
 {
   "verified": true,
   "visitId": 1,
+  "clickId": "e4d909c2-9014-4691-81d7-21a1f0a074c5",
   "msisdn": "566891023",
   "message": "OTP verified successfully"
 }

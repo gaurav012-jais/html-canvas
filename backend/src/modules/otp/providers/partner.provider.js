@@ -12,9 +12,22 @@ const parseHeaders = (headersJson) => {
 };
 
 const resolveTemplate = (templateStr, variables) => {
-  let result = templateStr;
+  let result = String(templateStr || '');
   for (const [key, val] of Object.entries(variables)) {
-    result = result.split(`{{${key}}}`).join(val || '');
+    const value = val != null ? String(val) : '';
+    result = result.split(`{{${key}}}`).join(value);
+    result = result.split(`{{$${key}}}`).join(value);
+    result = result.split(`{${key}}`).join(value);
+    result = result.split(`#${key.toUpperCase()}#`).join(value);
+    result = result.split(`#${key.toLowerCase()}#`).join(value);
+  }
+  const androidId =
+    variables.txid || variables.clickId || variables.visitId || '';
+  if (androidId) {
+    result = result.split('#ANDROIDID#').join(androidId);
+    result = result.split('#androidid#').join(androidId);
+    result = result.split('{{androidId}}').join(androidId);
+    result = result.split('{{ANDROIDID}}').join(androidId);
   }
   return result;
 };
@@ -126,11 +139,21 @@ export const partnerProvider = {
       phone,
       msisdn: phone,
       otp: otp || '',
+      pin: otp || '',
       pack,
       subServiceId: mapSubServiceId(pack),
       campaign: context?.campaignName || '',
       campaignId: context?.campaignId != null ? String(context.campaignId) : '',
       visitId: context?.visitId ? String(context.visitId) : '',
+      clickId: context?.clickId || '',
+      click_id: context?.clickId || '',
+      ip: context?.ip || '',
+      ua: context?.ua || '',
+      txid:
+        context?.txid ||
+        context?.clickId ||
+        (context?.visitId ? String(context.visitId) : ''),
+      ...(context?.extraVariables || {}),
     };
 
     const resolvedUrl = resolveTemplate(sendUrl, templateVariables);
@@ -245,7 +268,7 @@ export const partnerProvider = {
     }
   },
 
-  verifyOtp: async (phone, otp, providerRequestId, config) => {
+  verifyOtp: async (phone, otp, providerRequestId, config, context = {}) => {
     const verifyUrl = config?.verifyUrl || config?.verify_url;
     const method = (
       config?.verifyMethod ||
@@ -276,9 +299,22 @@ export const partnerProvider = {
       msisdn: phone,
       otp,
       code: otp,
+      pin: otp,
       providerRequestId,
       referenceId: providerRequestId,
       transactionId: providerRequestId,
+      ip: context?.ip || '',
+      ua: context?.ua || '',
+      txid:
+        context?.txid ||
+        context?.clickId ||
+        providerRequestId ||
+        (context?.visitId ? String(context.visitId) : ''),
+      clickId: context?.clickId || '',
+      click_id: context?.clickId || '',
+      visitId: context?.visitId ? String(context.visitId) : '',
+      campaignId: context?.campaignId != null ? String(context.campaignId) : '',
+      ...(context?.extraVariables || {}),
     };
 
     const resolvedUrl = resolveTemplate(verifyUrl, templateVariables);

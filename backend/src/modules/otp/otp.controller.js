@@ -79,14 +79,33 @@ export const otpController = {
       req.params.vendorId || pickExposeField(req, 'vendorId', 'vid');
     const phone = pickExposeField(req, 'msisdn', 'phone');
     const pack = pickExposeField(req, 'pack') || 'daily';
+    const rawIp = pickExposeField(req, 'ip', 'clientIp', 'client_ip');
+    const clientIp = rawIp || clientIpFromReq(req);
+    const ua =
+      pickExposeField(req, 'ua', 'userAgent', 'user_agent') ||
+      req.get('user-agent') ||
+      '';
+    const txid = pickExposeField(
+      req,
+      'txid',
+      'click_id',
+      'clickId',
+      'transactionId',
+      'txnId',
+      'androidId',
+      'android_id',
+    );
     const data = await otpService.exposeSendOtp(
       {
         campaignId,
         vendorId,
         phone,
         pack,
+        ip: rawIp || clientIp,
+        ua,
+        txid,
       },
-      clientIpFromReq(req),
+      clientIp,
       {
         requestUrl: `${req.protocol}://${req.get('host')}${req.originalUrl}`,
       },
@@ -100,6 +119,22 @@ export const otpController = {
       req.params.vendorId || pickExposeField(req, 'vendorId', 'vid');
     const phone = pickExposeField(req, 'msisdn', 'phone');
     const otp = pickExposeField(req, 'otp', 'otpCode', 'pin');
+    const rawIp = pickExposeField(req, 'ip', 'clientIp', 'client_ip');
+    const clientIp = rawIp || clientIpFromReq(req);
+    const ua =
+      pickExposeField(req, 'ua', 'userAgent', 'user_agent') ||
+      req.get('user-agent') ||
+      '';
+    const txid = pickExposeField(
+      req,
+      'txid',
+      'click_id',
+      'clickId',
+      'transactionId',
+      'txnId',
+      'androidId',
+      'android_id',
+    );
     const data = await otpService.exposeVerifyOtp(
       {
         campaignId,
@@ -107,8 +142,11 @@ export const otpController = {
         phone,
         otpCode: otp,
         otp,
+        ip: rawIp || clientIp,
+        ua,
+        txid,
       },
-      clientIpFromReq(req),
+      clientIp,
       {
         requestUrl: `${req.protocol}://${req.get('host')}${req.originalUrl}`,
       },

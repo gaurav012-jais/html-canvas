@@ -17,8 +17,8 @@ const start = async () => {
     await initDatabase();
     console.log('Database initialized successfully.');
 
-    console.log('Seeding prebuilt templates...');
-    await seedPrebuiltTemplates();
+    // console.log('Seeding prebuilt templates...');
+    // await seedPrebuiltTemplates();
 
     await searchService.init();
     startAnalyticsScheduler();

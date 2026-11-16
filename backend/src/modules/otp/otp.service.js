@@ -173,6 +173,8 @@ export const createOtpService = () => {
     landingUrl,
     visitStatus,
     vendorId,
+    userAgent,
+    customClickId,
   }) => {
     const cId = campaign.id;
     const msisdn = normalizeMsisdn(phone);
@@ -200,6 +202,9 @@ export const createOtpService = () => {
       if (clientIp) {
         patch.ipAddress = String(clientIp).split(',')[0].trim();
       }
+      if (userAgent && !existing.userAgent) {
+        patch.userAgent = userAgent;
+      }
       const nextStatus = exposeVisitStatusPatch(existing, visitStatus);
       if (nextStatus) {
         patch.visitStatus = nextStatus;
@@ -211,7 +216,7 @@ export const createOtpService = () => {
       return { ...existing, ...patch, id: existing.id };
     }
 
-    const clickId = mintClickId();
+    const clickId = customClickId || mintClickId();
     const visit = getVisitRepo().create({
       campaignId: cId,
       vendorId: vid,
@@ -219,6 +224,7 @@ export const createOtpService = () => {
       country: campaign.country || null,
       operator: campaign.operator || null,
       ipAddress: clientIp ? String(clientIp).split(',')[0].trim() : null,
+      userAgent: userAgent || null,
       landingUrl: landingUrl || null,
       clickId,
       pageType: CampaignPageType.OTP,
@@ -663,7 +669,7 @@ export const createOtpService = () => {
    * Visit ties logs into Campaign Logs / Session Detail with full req/res.
    */
   const exposeSendOtp = async (
-    { campaignId, vendorId, phone, pack },
+    { campaignId, vendorId, phone, pack, ip, ua, txid },
     clientIp,
     meta = {},
   ) => {
@@ -779,10 +785,19 @@ export const createOtpService = () => {
       throw err;
     }
 
+    const finalIp = ip
+      ? String(ip).split(',')[0].trim()
+      : clientIp
+        ? String(clientIp).split(',')[0].trim()
+        : '';
+    const finalUa = ua || '';
+
     const visit = await ensureExposeVisit({
       campaign: activeCampaign,
       phone: msisdn,
-      clientIp,
+      clientIp: finalIp,
+      userAgent: finalUa,
+      customClickId: txid || null,
       landingUrl: inboundUrl,
       visitStatus: VisitStatus.OTP_SHOWN,
       vendorId: vendor.id,
@@ -815,11 +830,16 @@ export const createOtpService = () => {
       throw err;
     }
 
+    const finalTxid = txid || visit.clickId || String(visit.id);
     const context = {
       campaignId: cId,
       campaignName: campaign?.name || '',
       visitId: visit.id,
+      clickId: visit.clickId,
       pack: pack || 'daily',
+      ip: finalIp,
+      ua: finalUa,
+      txid: finalTxid,
     };
 
     const sendResult = await provider.sendOtp(msisdn, '', providerConfig, context);
@@ -842,6 +862,7 @@ export const createOtpService = () => {
       providerRequestId: sendResult?.providerRequestId || null,
       sent: Boolean(sendResult?.success),
       visitId: visit.id,
+      clickId: visit.clickId,
       vendorId: vendor.id,
     };
 
@@ -908,7 +929,7 @@ export const createOtpService = () => {
   };
 
   const exposeVerifyOtp = async (
-    { campaignId, vendorId, phone, otp, otpCode },
+    { campaignId, vendorId, phone, otp, otpCode, ip, ua, txid },
     clientIp,
     meta = {},
   ) => {
@@ -1013,10 +1034,19 @@ export const createOtpService = () => {
       throw err;
     }
 
+    const finalIp = ip
+      ? String(ip).split(',')[0].trim()
+      : clientIp
+        ? String(clientIp).split(',')[0].trim()
+        : '';
+    const finalUa = ua || '';
+
     const visit = await ensureExposeVisit({
       campaign: activeCampaign,
       phone: msisdn,
-      clientIp,
+      clientIp: finalIp,
+      userAgent: finalUa,
+      customClickId: txid || null,
       landingUrl: inboundUrl,
       visitStatus: VisitStatus.OTP_SHOWN,
       vendorId: vendor.id,
@@ -1052,11 +1082,23 @@ export const createOtpService = () => {
       providerRequestId = pending.providerRequestId;
     }
 
+    const finalTxid = txid || visit.clickId || String(visit.id);
+    const context = {
+      campaignId: cId,
+      campaignName: campaign?.name || '',
+      visitId: visit.id,
+      clickId: visit.clickId,
+      ip: finalIp,
+      ua: finalUa,
+      txid: finalTxid,
+    };
+
     const verifyResult = await provider.verifyOtp(
       msisdn,
       otpPin,
       providerRequestId,
       providerConfig,
+      context,
     );
 
     let held = false;
@@ -1104,6 +1146,7 @@ export const createOtpService = () => {
           verified: clientSuccess,
           responseCode: verifyResult?.responseCode ?? null,
           visitId: visit.id,
+          clickId: visit.clickId,
           vendorId: vendor.id,
         };
 
