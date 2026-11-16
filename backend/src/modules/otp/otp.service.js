@@ -718,9 +718,43 @@ export const createOtpService = () => {
       throw err;
     }
 
+    // Evaluate capping & vendor assignment
+    let activeCampaign = campaign;
+    let activeCId = cId;
+    const cappingResult = await cappingService.evaluateCapping(campaign, {
+      vendorId,
+    });
+
+    if (cappingResult.isCapped) {
+      if (
+        cappingResult.action === 'fallback' &&
+        cappingResult.targetCampaign
+      ) {
+        activeCampaign = cappingResult.targetCampaign;
+        activeCId = activeCampaign.id;
+      } else {
+        const stoppedMsg = 'Offer is stopped due to capping limit';
+        await logInboundExpose({
+          callType: ApiCallType.CHECKSUB,
+          campaignId: cId,
+          phone: msisdn,
+          requestUrl: inboundUrl,
+          requestBody: inboundBody,
+          responseStatus: 403,
+          success: false,
+          errorMessage: stoppedMsg,
+          statusLabel: 'OFFER_STOPPED',
+        });
+        const err = new Error(stoppedMsg);
+        err.statusCode = 403;
+        err.code = 'OFFER_STOPPED';
+        throw err;
+      }
+    }
+
     let vendor;
     try {
-      ({ vendor } = await resolveAssignedVendor(campaign, vendorId));
+      ({ vendor } = await resolveAssignedVendor(activeCampaign, vendorId));
     } catch (err) {
       await logInboundExpose({
         callType: ApiCallType.CHECKSUB,
@@ -743,7 +777,7 @@ export const createOtpService = () => {
     const finalUa = ua || '';
 
     const visit = await ensureExposeVisit({
-      campaign,
+      campaign: activeCampaign,
       phone: msisdn,
       clientIp: finalIp,
       userAgent: finalUa,
@@ -754,7 +788,7 @@ export const createOtpService = () => {
     });
 
     const finalTxid = txid || visit.clickId || String(visit.id);
-    const apiConfig = await getApiConfigForCampaign(cId);
+    const apiConfig = await getApiConfigForCampaign(activeCId);
 
     if (!apiConfig?.subscriptionApi) {
       const resp = {
