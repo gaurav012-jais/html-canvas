@@ -21,7 +21,7 @@ export default () => ({
     host: process.env.DB_HOST || 'localhost',
     port: parseInt(
       process.env.DB_PORT ||
-        (process.env.DB_TYPE === 'postgres' ? '5432' : '3306'),
+        ((process.env.DB_TYPE || 'postgres') === 'postgres' ? '5432' : '3306'),
       10,
     ),
     username: process.env.DB_USERNAME || 'root',
