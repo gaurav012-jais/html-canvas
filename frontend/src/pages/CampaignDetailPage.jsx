@@ -1154,6 +1154,7 @@ function CampaignDetailPage() {
                     ]
                   : apiExpose
                     ? [
+                        { key: `${copyKey}-checksub`, method: 'GET', label: 'CheckSub', url: otpUrls.checksubUrl },
                         { key: `${copyKey}-send`, method: 'POST', label: 'Send', url: otpUrls.sendUrl },
                         { key: `${copyKey}-verify`, method: 'POST', label: 'Verify', url: otpUrls.verifyUrl },
                       ]

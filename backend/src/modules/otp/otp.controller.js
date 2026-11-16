@@ -73,6 +73,44 @@ export const otpController = {
     res.json(data);
   }),
 
+  exposeChecksub: asyncHandler(async (req, res) => {
+    const campaignId = req.params.campaignId;
+    const vendorId =
+      req.params.vendorId || pickExposeField(req, 'vendorId', 'vid');
+    const phone = pickExposeField(req, 'msisdn', 'phone');
+    const rawIp = pickExposeField(req, 'ip', 'clientIp', 'client_ip');
+    const clientIp = rawIp || clientIpFromReq(req);
+    const ua =
+      pickExposeField(req, 'ua', 'userAgent', 'user_agent') ||
+      req.get('user-agent') ||
+      '';
+    const txid = pickExposeField(
+      req,
+      'txid',
+      'click_id',
+      'clickId',
+      'transactionId',
+      'txnId',
+      'androidId',
+      'android_id',
+    );
+    const data = await otpService.exposeChecksub(
+      {
+        campaignId,
+        vendorId,
+        phone,
+        ip: rawIp || clientIp,
+        ua,
+        txid,
+      },
+      clientIp,
+      {
+        requestUrl: `${req.protocol}://${req.get('host')}${req.originalUrl}`,
+      },
+    );
+    res.json(data);
+  }),
+
   exposeSend: asyncHandler(async (req, res) => {
     const campaignId = req.params.campaignId;
     const vendorId =

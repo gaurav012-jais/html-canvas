@@ -13,6 +13,7 @@ export function buildOtpExposeUrls(origin, campaignId, vendorId) {
   const base = `${host}/api/otp/${cid}/${vid}`
   return {
     base,
+    checksubUrl: `${base}/checksub?msisdn=`,
     sendUrl: `${base}/send?msisdn=`,
     verifyUrl: `${base}/verify?msisdn=&otp=`,
   }
@@ -25,6 +26,26 @@ export function buildOtpExposeApiPayload({ origin, campaign, vendor, vendorId } 
   const vid = vendorId || vendor?.id || '{vendorId}'
   const urls = buildOtpExposeUrls(origin, cid, vid)
   return [
+    {
+      comment: 'Step 0 (Optional) — Check subscriber status before sending OTP. If status is ACTIVE, do not send OTP.',
+      method: 'GET',
+      url: urls.checksubUrl.replace(/\?.*$/, ''),
+      request: {
+        msisdn: SAMPLE_MSISDN,
+        txid: 'VENDOR_CLICK_12345',
+        ip: '185.22.33.44',
+        ua: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15',
+      },
+      response: {
+        msisdn: SAMPLE_MSISDN,
+        status: 'INACTIVE',
+        active: false,
+        visitId: 1,
+        clickId: 'e4d909c2-9014-4691-81d7-21a1f0a074c5',
+        vendorId: vid,
+        message: 'Subscriber is not active (new user)',
+      },
+    },
     {
       comment: 'Step 1 — send OTP to this MSISDN. Pass client IP, User-Agent, and your click/transaction ID.',
       method: 'POST',
@@ -70,6 +91,7 @@ export function buildOtpExposeMarkdownGuide({ origin, campaign, vendor, vendorId
   const urls = buildOtpExposeUrls(origin, cid, vid)
   const vendorName = vendor?.name || vendor?.code || 'Vendor'
   const campaignName = campaign?.name || 'Campaign'
+  const checksubBase = urls.checksubUrl.replace(/\?.*$/, '')
   const sendBase = urls.sendUrl.replace(/\?.*$/, '')
   const verifyBase = urls.verifyUrl.replace(/\?.*$/, '')
 
@@ -79,16 +101,17 @@ export function buildOtpExposeMarkdownGuide({ origin, campaign, vendor, vendorId
 > **Vendor:** ${vendorName} (ID: \`${vid}\`)  
 > **Base URL:** \`${urls.base}\`  
 > **Format:** RESTful API (JSON Body or URL Query Parameters)  
-> **Call Sequence:** \`Send OTP\` → \`Verify OTP\`
+> **Call Sequence:** \`Check Subscription (Optional)\` → \`Send OTP\` → \`Verify OTP\`
 
-This specification describes the vendor-scoped One-Time Password (OTP) verification API flow. Vendors can integrate these endpoints to dispatch verification codes via SMS and confirm them to trigger conversion.
+This specification describes the vendor-scoped One-Time Password (OTP) verification API flow. Vendors can integrate these endpoints to check subscriber status, dispatch verification codes via SMS, and confirm them to trigger conversion.
 
 ---
 
 ## 1. Integration Lifecycle
 
-1. **Step 1 — Send OTP**: Dispatch a one-time verification passcode to the subscriber's phone number via SMS.
-2. **Step 2 — Verify OTP**: Verify the code entered by the user. Upon successful verification, the vendor conversion is counted.
+1. **Step 0 — Check Subscription (Optional / Subscriber Lookup)**: Query the subscriber's current subscription status before sending an OTP. If already \`ACTIVE\`, do not dispatch an OTP.
+2. **Step 1 — Send OTP**: Dispatch a one-time verification passcode to the subscriber's phone number via SMS.
+3. **Step 2 — Verify OTP**: Verify the code entered by the user. Upon successful verification, the vendor conversion is counted.
 
 ---
 
@@ -96,6 +119,7 @@ This specification describes the vendor-scoped One-Time Password (OTP) verificat
 
 | Method | Endpoint | Summary |
 |---|---|---|
+| \`POST\` / \`GET\` | \`${checksubBase}\` | Check subscriber subscription status (ACTIVE / INACTIVE) |
 | \`POST\` / \`GET\` | \`${sendBase}\` | Send verification OTP to subscriber MSISDN |
 | \`POST\` / \`GET\` | \`${verifyBase}\` | Verify OTP code and record conversion |
 
@@ -103,7 +127,97 @@ This specification describes the vendor-scoped One-Time Password (OTP) verificat
 
 ## 3. API Reference
 
-### 3.1 Send OTP
+### 3.1 Check Subscription (Subscriber Lookup)
+\`GET ${checksubBase}\` (or \`POST ${checksubBase}\`)  
+Query format: \`${checksubBase}?msisdn={msisdn}&txid={click_id}&ip={ip}&ua={ua}\`
+
+Checks if the given mobile number is already subscribed.
+
+#### Request
+- **Method:** \`GET\` (or \`POST\`)
+- **Headers:**
+  - \`Accept: application/json\`
+  - \`Content-Type: application/json\` (when using POST)
+- **Parameters / Body Schema:**
+  | Parameter | Type | Required | Example | Description |
+  |---|---|---|---|---|
+  | \`msisdn\` | string | Yes | \`566891023\` | Subscriber mobile phone number |
+  | \`txid\` / \`click_id\` | string | Recommended | \`VENDOR_CLICK_12345\` | Your click / transaction tracking ID |
+  | \`ip\` | string | Recommended | \`185.22.33.44\` | Real subscriber / client IP address |
+  | \`ua\` | string | Recommended | \`Mozilla/5.0...\` | User-Agent of the subscriber's device |
+
+#### cURL Example (GET Query Parameters)
+\`\`\`bash
+curl -X GET '${checksubBase}?msisdn=566891023&txid=VENDOR_CLICK_12345&ip=185.22.33.44' \\
+  -H 'Accept: application/json'
+\`\`\`
+
+#### cURL Example (POST JSON)
+\`\`\`bash
+curl -X POST '${checksubBase}' \\
+  -H 'Content-Type: application/json' \\
+  -H 'Accept: application/json' \\
+  -d '{
+    "msisdn": "566891023",
+    "txid": "VENDOR_CLICK_12345",
+    "ip": "185.22.33.44"
+  }'
+\`\`\`
+
+#### Responses
+
+##### 🟢 200 OK — Inactive (New User, Proceed to Send OTP)
+Subscriber is not active. Proceed to **Step 1 (Send OTP)**.
+\`\`\`json
+{
+  "msisdn": "566891023",
+  "status": "INACTIVE",
+  "active": false,
+  "visitId": 1,
+  "clickId": "e4d909c2-9014-4691-81d7-21a1f0a074c5",
+  "vendorId": 1,
+  "message": "Subscriber is not active (new user)"
+}
+\`\`\`
+
+##### 🟢 200 OK — Active (Already Subscribed)
+Subscriber is already active. Do **not** send OTP.
+\`\`\`json
+{
+  "msisdn": "566891023",
+  "status": "ACTIVE",
+  "active": true,
+  "shouldSkipSubscribe": true,
+  "visitId": 1,
+  "clickId": "e4d909c2-9014-4691-81d7-21a1f0a074c5",
+  "vendorId": 1,
+  "message": "Subscriber already has an active subscription"
+}
+\`\`\`
+
+##### 🔴 400 Bad Request — Missing / Invalid Phone
+The MSISDN provided is missing or invalid.
+\`\`\`json
+{
+  "statusCode": 400,
+  "error": "Error",
+  "message": "Phone number is required"
+}
+\`\`\`
+
+##### 🔴 403 Forbidden — Offer Stopped / Inactive
+Campaign is capped or vendor is inactive.
+\`\`\`json
+{
+  "statusCode": 403,
+  "error": "Error",
+  "message": "Offer is stopped due to capping limit"
+}
+\`\`\`
+
+---
+
+### 3.2 Send OTP
 \`POST ${sendBase}\`  
 Query format fallback: \`${sendBase}?msisdn={msisdn}&ip={ip}&ua={ua}&txid={click_id}\`
 
@@ -220,7 +334,7 @@ Failed to communicate with the upstream SMS aggregator or operator gateway.
 
 ---
 
-### 3.2 Verify OTP
+### 3.3 Verify OTP
 \`POST ${verifyBase}\`  
 Query format fallback: \`${verifyBase}?msisdn={msisdn}&otp={otp}&txid={click_id}\`
 

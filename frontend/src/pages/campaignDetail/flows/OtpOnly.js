@@ -15,6 +15,7 @@ const apiExpose = {
     const otpUrls = buildOtpExposeUrls(origin, campaign.id, vendorId)
     const copyKey = String(vendorId)
     return [
+      { key: `${copyKey}-checksub`, method: 'GET', label: 'CheckSub', url: otpUrls.checksubUrl },
       { key: `${copyKey}-send`, method: 'POST', label: 'Send', url: otpUrls.sendUrl },
       { key: `${copyKey}-verify`, method: 'POST', label: 'Verify', url: otpUrls.verifyUrl },
     ]

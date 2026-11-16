@@ -17,6 +17,7 @@ import { searchService } from '../search/search.service.js';
 import { cappingService } from '../campaigns/capping.service.js';
 import { HELD_OTP_MESSAGE, parsePayoutPercent } from './helpers/payout.js';
 import { resolveApprovalHold } from './helpers/approval-control.js';
+import { partnerApiService } from '../flow/partner-api.service.js';
 import {
   exposeVisitStatusPatch,
   isAlreadySubscribedText,
@@ -665,6 +666,180 @@ export const createOtpService = () => {
   };
 
   /**
+   * Vendor-scoped Checksub / Subscriber lookup endpoint.
+   * Calls partner checksub (lookup) and returns subscriber status (ACTIVE / INACTIVE).
+   */
+  const exposeChecksub = async (
+    { campaignId, vendorId, phone, ip, ua, txid },
+    clientIp,
+    meta = {},
+  ) => {
+    const cId = parseInt(campaignId, 10);
+    if (!cId) {
+      const err = new Error('campaignId is required');
+      err.statusCode = 400;
+      throw err;
+    }
+    if (!phone || !String(phone).trim()) {
+      const err = new Error('Phone number is required');
+      err.statusCode = 400;
+      throw err;
+    }
+
+    const msisdn = normalizeMsisdn(phone);
+    if (!msisdn) {
+      const err = new Error('Phone number is required');
+      err.statusCode = 400;
+      throw err;
+    }
+
+    const inboundUrl =
+      meta.requestUrl || `/api/otp/${cId}/${vendorId || '{vendorId}'}/checksub`;
+    const inboundBody = serializeInboundBody({
+      msisdn,
+      vendorId: vendorId || null,
+      txid: txid || null,
+    });
+
+    const campaign = await getCampaignRepo().findOne({ where: { id: cId } });
+    try {
+      assertApiExposeCampaign(campaign);
+    } catch (err) {
+      await logInboundExpose({
+        callType: ApiCallType.CHECKSUB,
+        campaignId: cId,
+        phone: msisdn,
+        requestUrl: inboundUrl,
+        requestBody: inboundBody,
+        responseStatus: err.statusCode || 400,
+        success: false,
+        errorMessage: err.message,
+      });
+      throw err;
+    }
+
+    let vendor;
+    try {
+      ({ vendor } = await resolveAssignedVendor(campaign, vendorId));
+    } catch (err) {
+      await logInboundExpose({
+        callType: ApiCallType.CHECKSUB,
+        campaignId: cId,
+        phone: msisdn,
+        requestUrl: inboundUrl,
+        requestBody: inboundBody,
+        responseStatus: err.statusCode || 400,
+        success: false,
+        errorMessage: err.message,
+      });
+      throw err;
+    }
+
+    const finalIp = ip
+      ? String(ip).split(',')[0].trim()
+      : clientIp
+        ? String(clientIp).split(',')[0].trim()
+        : '';
+    const finalUa = ua || '';
+
+    const visit = await ensureExposeVisit({
+      campaign,
+      phone: msisdn,
+      clientIp: finalIp,
+      userAgent: finalUa,
+      customClickId: txid || null,
+      landingUrl: inboundUrl,
+      visitStatus: VisitStatus.VISIT,
+      vendorId: vendor.id,
+    });
+
+    const finalTxid = txid || visit.clickId || String(visit.id);
+    const apiConfig = await getApiConfigForCampaign(cId);
+
+    if (!apiConfig?.subscriptionApi) {
+      const resp = {
+        msisdn,
+        status: 'INACTIVE',
+        active: false,
+        visitId: visit.id,
+        clickId: visit.clickId,
+        vendorId: vendor.id,
+        message: 'No subscriptionApi configured; subscriber is considered new',
+      };
+      await logInboundExpose({
+        callType: ApiCallType.CHECKSUB,
+        visit,
+        campaignId: cId,
+        phone: msisdn,
+        requestUrl: inboundUrl,
+        requestBody: inboundBody,
+        responseStatus: 200,
+        responseBody: resp,
+        success: true,
+        statusLabel: 'INACTIVE',
+      });
+      return resp;
+    }
+
+    const checkInput = {
+      phone: msisdn,
+      msisdn,
+      campaignId: cId,
+      visitId: visit.id,
+      country: campaign.country,
+      operator: campaign.operator,
+      serviceId: campaign.serviceId,
+      txid: finalTxid,
+      clickId: visit.clickId,
+      ip: finalIp,
+      ua: finalUa,
+    };
+
+    const checkResult = await partnerApiService.checkSubscription(
+      apiConfig,
+      checkInput,
+    );
+
+    const isSubActive = Boolean(checkResult.isActive);
+    const rawStatus =
+      checkResult.currentStatus ||
+      checkResult.subscriptionStatus ||
+      checkResult.status ||
+      (isSubActive ? 'ACTIVE' : 'INACTIVE');
+    const statusUpper = String(rawStatus).toUpperCase();
+
+    const responsePayload = {
+      msisdn,
+      status: statusUpper,
+      active: isSubActive,
+      shouldSkipSubscribe: Boolean(checkResult.shouldSkipSubscribe),
+      go: checkResult.go || null,
+      page: checkResult.page || null,
+      visitId: visit.id,
+      clickId: visit.clickId,
+      vendorId: vendor.id,
+      message: isSubActive
+        ? 'Subscriber already has an active subscription'
+        : 'Subscriber is not active (new user)',
+    };
+
+    await logInboundExpose({
+      callType: ApiCallType.CHECKSUB,
+      visit,
+      campaignId: cId,
+      phone: msisdn,
+      requestUrl: inboundUrl,
+      requestBody: inboundBody,
+      responseStatus: 200,
+      responseBody: responsePayload,
+      success: true,
+      statusLabel: isSubActive ? 'ACTIVE' : 'INACTIVE',
+    });
+
+    return responsePayload;
+  };
+
+  /**
    * Public API-expose mediator: mint visit → log inbound → partner OTP → log outbound.
    * Visit ties logs into Campaign Logs / Session Detail with full req/res.
    */
@@ -1233,6 +1408,7 @@ export const createOtpService = () => {
   return {
     sendOtp,
     verifyOtp,
+    exposeChecksub,
     exposeSendOtp,
     exposeVerifyOtp,
     isRateLimited,

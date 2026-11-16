@@ -24,8 +24,6 @@ export const createPartnerApiService = () => {
   const buildVars = (input) => {
     const phone = input.phone ?? '';
     const planId = input.planId ?? '';
-    // Never expose click_id / campid / rcid to third-party partner URLs —
-    // those stay on our visit / api_call_logs only.
     return {
       phone,
       msisdn: phone,
@@ -36,6 +34,10 @@ export const createPartnerApiService = () => {
       pack: planId || 'daily',
       subServiceId:
         sanitizeSubscribeParam(input.subServiceId) || mapSubServiceId(planId),
+      txid: input.txid || input.clickId || '',
+      clickId: input.clickId || input.txid || '',
+      ip: input.ip ?? '',
+      ua: input.ua ?? '',
     };
   };
 
