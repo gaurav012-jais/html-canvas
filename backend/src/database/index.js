@@ -67,6 +67,7 @@ export const initDatabase = async () => {
   await ensureDcbConfigJsonColumn(dataSource);
   await ensureFunnelLayoutColumn(dataSource);
   await ensureCampaignCappingColumns(dataSource);
+  await ensureCampaignTrackingsCappingColumns(dataSource);
   await ensureDelayedChecksubColumns(dataSource);
   await ensureVisitsChecksubColumns(dataSource);
   await ensureDailyStatsTable(dataSource);
@@ -396,6 +397,43 @@ async function ensureCampaignCappingColumns(ds) {
     }
   } catch (err) {
     console.warn('ensureCampaignCappingColumns:', err.message);
+  }
+}
+
+/** Idempotent: campaign_trackings vendor capping & traffic fallback columns. */
+async function ensureCampaignTrackingsCappingColumns(ds) {
+  const isPostgres = (ds.options.type || 'postgres') === 'postgres';
+  try {
+    if (isPostgres) {
+      await ds.query(`
+        ALTER TABLE "campaign_trackings"
+        ADD COLUMN IF NOT EXISTS "capping_enabled" boolean NOT NULL DEFAULT false,
+        ADD COLUMN IF NOT EXISTS "capping_metric" varchar(16) NOT NULL DEFAULT 'conversions',
+        ADD COLUMN IF NOT EXISTS "capping_limit" int NULL,
+        ADD COLUMN IF NOT EXISTS "capping_action" varchar(16) NOT NULL DEFAULT 'stop',
+        ADD COLUMN IF NOT EXISTS "fallback_campaign_id" int NULL,
+        ADD COLUMN IF NOT EXISTS "capping_interval" varchar(16) NOT NULL DEFAULT 'daily'
+      `);
+    } else {
+      const checkCol = async (colName, colDef) => {
+        const rows = await ds.query(
+          `SELECT COUNT(*) AS cnt FROM information_schema.COLUMNS
+           WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'campaign_trackings' AND COLUMN_NAME = '${colName}'`,
+        );
+        const cnt = Number(rows?.[0]?.cnt ?? rows?.[0]?.CNT ?? 0);
+        if (!cnt) {
+          await ds.query(`ALTER TABLE \`campaign_trackings\` ADD COLUMN ${colDef}`);
+        }
+      };
+      await checkCol('capping_enabled', '`capping_enabled` tinyint(1) NOT NULL DEFAULT 0');
+      await checkCol('capping_metric', '`capping_metric` varchar(16) NOT NULL DEFAULT \'conversions\'');
+      await checkCol('capping_limit', '`capping_limit` int NULL');
+      await checkCol('capping_action', '`capping_action` varchar(16) NOT NULL DEFAULT \'stop\'');
+      await checkCol('fallback_campaign_id', '`fallback_campaign_id` int NULL');
+      await checkCol('capping_interval', '`capping_interval` varchar(16) NOT NULL DEFAULT \'daily\'');
+    }
+  } catch (err) {
+    console.warn('ensureCampaignTrackingsCappingColumns:', err.message);
   }
 }
 

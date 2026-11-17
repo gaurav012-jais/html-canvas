@@ -218,10 +218,6 @@ export function createGetPage(deps) {
         phone,
       });
       visitId = landing.visitId;
-      await cappingService.incrementCampaignClickCount(
-        campaign.id,
-        campaign.cappingInterval,
-      );
 
       const cgOnCreate = await maybeNullFlowCgRedirect(campaign, visitId, input);
       if (cgOnCreate) {

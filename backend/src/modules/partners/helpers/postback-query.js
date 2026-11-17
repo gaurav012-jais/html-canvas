@@ -54,7 +54,7 @@ export function createPostbackQuery(deps) {
     const [campaigns, vendors] = await Promise.all([
       getCampaignRepo().find({
         where: { userId },
-        select: ['id', 'name', 'country', 'operator'],
+        relations: { marketOperator: { country: true } },
       }),
       getVendorRepo().find({
         where: { userId },
@@ -143,11 +143,14 @@ export function createPostbackQuery(deps) {
   });
 
   const getSummary = async (userId, query = {}) => {
-    const { campaignIds, vendorIds, vendors } = await resolveUserScope(userId);
+    const { campaignIds, vendorIds, vendors, campaigns } =
+      await resolveUserScope(userId);
     if (!campaignIds.length && !vendorIds.length) {
       return emptySummary();
     }
 
+    const countryFilter = String(query.country || '').trim().toUpperCase();
+    const operatorFilter = String(query.operator || '').trim().toLowerCase();
     const campaignIdFilter = query.campaignId
       ? parseInt(query.campaignId, 10)
       : null;
@@ -156,10 +159,34 @@ export function createPostbackQuery(deps) {
       : null;
     const offerCodeFilter = String(query.offerCode || '').trim();
 
+    let scopedCampaigns = campaigns;
+    if (countryFilter) {
+      scopedCampaigns = scopedCampaigns.filter(
+        (c) =>
+          String(c.country || '').toUpperCase() === countryFilter ||
+          String(c.marketOperator?.country?.code || '').toUpperCase() === countryFilter ||
+          String(c.marketOperator?.country?.name || '').toUpperCase() === countryFilter,
+      );
+    }
+    if (operatorFilter) {
+      scopedCampaigns = scopedCampaigns.filter(
+        (c) =>
+          String(c.operator || '').toLowerCase() === operatorFilter ||
+          String(c.marketOperator?.code || '').toLowerCase() === operatorFilter ||
+          String(c.marketOperator?.name || '').toLowerCase() === operatorFilter,
+      );
+    }
+
+    let scopedCampaignIds = scopedCampaigns.map((c) => c.id);
     if (campaignIdFilter && !Number.isNaN(campaignIdFilter)) {
-      if (campaignIds.length && !campaignIds.includes(campaignIdFilter)) {
+      if (!scopedCampaignIds.includes(campaignIdFilter)) {
         return emptySummary();
       }
+      scopedCampaignIds = [campaignIdFilter];
+    }
+
+    if (scopedCampaignIds.length === 0 && !vendorIds.length) {
+      return emptySummary();
     }
 
     const days = Math.min(Math.max(Number(query.days) || 30, 1), 365);
@@ -176,17 +203,14 @@ export function createPostbackQuery(deps) {
 
     let msisdnResolved = 0;
     let heFailCg = 0;
-    if (campaignIds.length) {
+    if (scopedCampaignIds.length) {
       const visitQ = getVisitRepo()
         .createQueryBuilder('v')
-        .where('v.campaignId IN (:...campaignIds)', { campaignIds })
+        .where('v.campaignId IN (:...scopedCampaignIds)', { scopedCampaignIds })
         .andWhere('v.phone IS NOT NULL')
         .andWhere("v.phone <> ''")
         .andWhere('v.createdAt >= :since', { since });
       if (to) visitQ.andWhere('v.createdAt <= :until', { until: to });
-      if (campaignIdFilter && !Number.isNaN(campaignIdFilter)) {
-        visitQ.andWhere('v.campaignId = :campaignIdFilter', { campaignIdFilter });
-      }
       if (vendorIdFilter && !Number.isNaN(vendorIdFilter)) {
         visitQ.andWhere('v.vendorId = :vendorIdFilter', { vendorIdFilter });
       }
@@ -194,16 +218,13 @@ export function createPostbackQuery(deps) {
 
       const failQ = getApiCallLogRepo()
         .createQueryBuilder('l')
-        .where('l.campaignId IN (:...campaignIds)', { campaignIds })
+        .where('l.campaignId IN (:...scopedCampaignIds)', { scopedCampaignIds })
         .andWhere('l.callType = :heRedirect', {
           heRedirect: ApiCallType.HE_REDIRECT,
         })
         .andWhere('l.success = :fail', { fail: false })
         .andWhere('l.createdAt >= :since', { since });
       if (to) failQ.andWhere('l.createdAt <= :until', { until: to });
-      if (campaignIdFilter && !Number.isNaN(campaignIdFilter)) {
-        failQ.andWhere('l.campaignId = :campaignIdFilter', { campaignIdFilter });
-      }
       heFailCg = await failQ.getCount();
     }
 
@@ -211,18 +232,15 @@ export function createPostbackQuery(deps) {
       .createQueryBuilder('p')
       .where('p.createdAt >= :since', { since });
     if (to) pbQ.andWhere('p.createdAt <= :until', { until: to });
-    if (campaignIds.length && vendorIds.length) {
+    if (scopedCampaignIds.length && vendorIds.length) {
       pbQ.andWhere(
-        '(p.campaignId IN (:...campaignIds) OR p.vendorId IN (:...vendorIds))',
-        { campaignIds, vendorIds },
+        '(p.campaignId IN (:...scopedCampaignIds) OR p.vendorId IN (:...vendorIds))',
+        { scopedCampaignIds, vendorIds },
       );
-    } else if (campaignIds.length) {
-      pbQ.andWhere('p.campaignId IN (:...campaignIds)', { campaignIds });
+    } else if (scopedCampaignIds.length) {
+      pbQ.andWhere('p.campaignId IN (:...scopedCampaignIds)', { scopedCampaignIds });
     } else {
       pbQ.andWhere('p.vendorId IN (:...vendorIds)', { vendorIds });
-    }
-    if (campaignIdFilter && !Number.isNaN(campaignIdFilter)) {
-      pbQ.andWhere('p.campaignId = :campaignIdFilter', { campaignIdFilter });
     }
     if (vendorIdFilter && !Number.isNaN(vendorIdFilter)) {
       pbQ.andWhere('p.vendorId = :vendorIdFilter', { vendorIdFilter });
@@ -287,18 +305,15 @@ export function createPostbackQuery(deps) {
       .andWhere('p.operatorStatus IS NOT NULL')
       .andWhere("p.operatorStatus <> ''");
     if (to) opQ.andWhere('p.createdAt <= :until', { until: to });
-    if (campaignIds.length && vendorIds.length) {
+    if (scopedCampaignIds.length && vendorIds.length) {
       opQ.andWhere(
-        '(p.campaignId IN (:...campaignIds) OR p.vendorId IN (:...vendorIds))',
-        { campaignIds, vendorIds },
+        '(p.campaignId IN (:...scopedCampaignIds) OR p.vendorId IN (:...vendorIds))',
+        { scopedCampaignIds, vendorIds },
       );
-    } else if (campaignIds.length) {
-      opQ.andWhere('p.campaignId IN (:...campaignIds)', { campaignIds });
+    } else if (scopedCampaignIds.length) {
+      opQ.andWhere('p.campaignId IN (:...scopedCampaignIds)', { scopedCampaignIds });
     } else {
       opQ.andWhere('p.vendorId IN (:...vendorIds)', { vendorIds });
-    }
-    if (campaignIdFilter && !Number.isNaN(campaignIdFilter)) {
-      opQ.andWhere('p.campaignId = :campaignIdFilter', { campaignIdFilter });
     }
     if (vendorIdFilter && !Number.isNaN(vendorIdFilter)) {
       opQ.andWhere('p.vendorId = :vendorIdFilter', { vendorIdFilter });
@@ -320,14 +335,14 @@ export function createPostbackQuery(deps) {
 
     let callbacksReceived = 0;
     let byOperatorStatus = latestByOperatorStatus;
-    if (campaignIds.length) {
+    if (scopedCampaignIds.length) {
       try {
         const statusExpr =
           `LOWER(COALESCE(NULLIF((regexp_match(l.request_body, '"status"[[:space:]]*:[[:space:]]*"([^"]+)"'))[1], ''), 'unknown'))`;
         const cbQ = getApiCallLogRepo()
           .createQueryBuilder('l')
           .where('l.callType = :cbType', { cbType: ApiCallType.BILLING_CALLBACK })
-          .andWhere('l.campaignId IN (:...campaignIds)', { campaignIds })
+          .andWhere('l.campaignId IN (:...scopedCampaignIds)', { scopedCampaignIds })
           .andWhere('l.createdAt >= :since', { since });
         if (to) cbQ.andWhere('l.createdAt <= :until', { until: to });
         const cbRows = await cbQ

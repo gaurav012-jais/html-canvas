@@ -12,6 +12,7 @@ import { smsProviderManager } from './providers/sms-provider.manager.js';
 import { redisService } from '../../common/services/redis.service.js';
 import { apiCallLogService } from '../flow/api-call-log.service.js';
 import { orangeBfService } from '../flow/orange-bf.service.js';
+import { universeDcbService } from '../flow/universe-dcb.service.js';
 import { flowEngineService } from '../flow/flow-engine.service.js';
 import { searchService } from '../search/search.service.js';
 import { cappingService } from '../campaigns/capping.service.js';
@@ -787,8 +788,97 @@ export const createOtpService = () => {
       vendorId: vendor.id,
     });
 
+    await cappingService.incrementCampaignClickCount(
+      activeCId,
+      activeCampaign.cappingInterval,
+      vendor.id,
+    );
+
     const finalTxid = txid || visit.clickId || String(visit.id);
     const apiConfig = await getApiConfigForCampaign(activeCId);
+    const vMode = flowEngineService.normalizeMode(campaign?.verificationMode);
+
+    if (vMode === 'ORANGE_BF') {
+      const bfResult = await orangeBfService.startOrCheckSub({
+        phone: msisdn,
+        campaignId: campaign.id,
+        visitId: visit.id,
+        vendorId: vendor.id,
+      });
+      const isSubActive = Boolean(bfResult.status === 'active' || bfResult.outcome === 'active' || bfResult.active);
+      const statusUpper = String(bfResult.status || bfResult.outcome || (isSubActive ? 'ACTIVE' : 'INACTIVE')).toUpperCase();
+      const responsePayload = {
+        msisdn,
+        status: statusUpper,
+        active: isSubActive,
+        shouldSkipSubscribe: isSubActive,
+        go: isSubActive ? 'page' : 'continue',
+        page: isSubActive ? 'THANKYOU' : null,
+        visitId: visit.id,
+        clickId: visit.clickId,
+        vendorId: vendor.id,
+        message: isSubActive
+          ? 'Subscriber already has an active subscription'
+          : 'Subscriber is not active (new user)',
+      };
+      await logInboundExpose({
+        callType: ApiCallType.CHECKSUB,
+        visit,
+        campaignId: cId,
+        phone: msisdn,
+        requestUrl: inboundUrl,
+        requestBody: inboundBody,
+        responseStatus: 200,
+        responseBody: responsePayload,
+        success: true,
+        statusLabel: statusUpper,
+      });
+      return responsePayload;
+    }
+
+    if (vMode === 'UNIVERSE_DCB') {
+      let dcbOutcome = null;
+      try {
+        dcbOutcome = await universeDcbService.manualCheck({
+          msisdn,
+          phone: msisdn,
+          campaignId: campaign.id,
+          visitId: visit.id,
+          serviceId: campaign.serviceId,
+        });
+      } catch (dcbErr) {
+        console.warn('DCB manualCheck error in exposeChecksub:', dcbErr.message);
+      }
+      const isSubActive = Boolean(dcbOutcome?.outcome === 'ENTITLED' || dcbOutcome?.status === 'ACTIVE');
+      const statusUpper = String(dcbOutcome?.status || dcbOutcome?.outcome || (isSubActive ? 'ACTIVE' : 'INACTIVE')).toUpperCase();
+      const responsePayload = {
+        msisdn,
+        status: statusUpper,
+        active: isSubActive,
+        shouldSkipSubscribe: isSubActive,
+        go: isSubActive ? 'page' : 'continue',
+        page: isSubActive ? 'THANKYOU' : null,
+        visitId: visit.id,
+        clickId: visit.clickId,
+        vendorId: vendor.id,
+        message: isSubActive
+          ? 'Subscriber already has an active subscription'
+          : 'Subscriber is not active (new user)',
+      };
+      await logInboundExpose({
+        callType: ApiCallType.CHECKSUB,
+        visit,
+        campaignId: cId,
+        phone: msisdn,
+        requestUrl: inboundUrl,
+        requestBody: inboundBody,
+        responseStatus: 200,
+        responseBody: responsePayload,
+        success: true,
+        statusLabel: statusUpper,
+      });
+      return responsePayload;
+    }
 
     if (!apiConfig?.subscriptionApi) {
       const resp = {
@@ -1015,6 +1105,7 @@ export const createOtpService = () => {
     await cappingService.incrementCampaignClickCount(
       activeCId,
       activeCampaign.cappingInterval,
+      vendor.id,
     );
 
     const apiConfig = await getApiConfigForCampaign(activeCId);
@@ -1413,6 +1504,7 @@ export const createOtpService = () => {
       await cappingService.incrementCampaignConversionCount(
         convCampaignId,
         activeCampaign.cappingInterval,
+        vendor.id,
       );
     }
     await redisService.del(exposePendingKey(activeCId, vendor.id, phone));

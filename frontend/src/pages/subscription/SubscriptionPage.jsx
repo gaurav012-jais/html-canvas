@@ -236,7 +236,7 @@ function SubscriptionPage() {
     transitionLockRef,
   })
 
-  if (!country || !operator) {
+  if ((!country || !operator) && !campid && !trackingCampid) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-bg-base p-6">
         <div className="text-center max-w-md">

@@ -60,7 +60,14 @@ export function createFlowCampaignFns(deps) {
   };
 
   const resolveSuccessRedirect = async (campaign, visitId, input = {}) => {
-    const raw = campaign?.successRedirectUrl?.trim();
+    let raw = campaign?.successRedirectUrl?.trim();
+    if (!raw) {
+      raw =
+        campaign?.marketOperator?.serviceUrl?.trim() ||
+        campaign?.cgRedirectUrl?.trim() ||
+        process.env.DEFAULT_SERVICE_REDIRECT_URL ||
+        null;
+    }
     if (!raw) return null;
     const attr = await loadVisitAttribution(visitId, input);
     let phone = String(input.phone || input.msisdn || '').replace(/\D/g, '');
@@ -125,7 +132,7 @@ export function createFlowCampaignFns(deps) {
       (when === 'subscribe' &&
         flowEngineService.isSubscribeCgRedirectMode(mode));
     if (!allow) return null;
-  
+
     const attr = await loadVisitAttribution(visitId, input);
     return buildCgRedirectUrl(cg, {
       clickId: attr.clickId,
@@ -144,12 +151,12 @@ export function createFlowCampaignFns(deps) {
     const cacheKey = resolveKey
       ? `flow:campaign:id:${resolveKey}`
       : `flow:campaign:co:${String(input.country).toLowerCase()}:${String(input.operator).toLowerCase()}`;
-  
+
     if (isFlowCacheEnabled()) {
       const cached = await redisService.get(cacheKey);
       if (cached) return cached;
     }
-  
+
     let campaign = null;
     if (resolveKey) {
       const parsed = parseTrackingId(resolveKey);
@@ -171,7 +178,7 @@ export function createFlowCampaignFns(deps) {
         input.operator,
       );
     }
-  
+
     if (campaign && isFlowCacheEnabled()) {
       const ttl = getFlowCacheTtl?.() || 600;
       await redisService.set(cacheKey, campaign, ttl);
@@ -196,35 +203,35 @@ export function createFlowCampaignFns(deps) {
     const trackings = campaign.trackings || [];
     if (trackings.length === 0) return;
     if (!vid && vendorId == null) return;
-  
+
     const vidNorm = vid ? String(vid).trim().toLowerCase() : '';
     let resolvedVendorId = vendorId;
-  
+
     let matched =
       trackings.find((t) => {
         const vCode = t.vendor?.code?.trim().toLowerCase() || '';
         return vidNorm && vCode === vidNorm;
       }) || null;
-  
+
     if (!matched && !resolvedVendorId) {
       const attribution = await partnersService
         .resolveAttribution(vid)
         .catch(() => ({ vendorId: undefined }));
       resolvedVendorId = attribution.vendorId;
     }
-  
+
     if (!matched && resolvedVendorId) {
       matched =
         trackings.find(
           (t) => (t.vendor?.id ?? t.vendorId) === resolvedVendorId,
         ) || null;
     }
-  
+
     if (!matched) return;
-  
+
     const assignmentActive = matched.active !== false;
     const vendorActive = matched.vendor?.active !== false;
-  
+
     if (!assignmentActive || !vendorActive) {
       const err = new Error('This offer is not available');
       err.statusCode = 403;

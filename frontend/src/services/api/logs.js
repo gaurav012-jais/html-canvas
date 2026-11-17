@@ -7,6 +7,9 @@ export async function getLogsStatus() {
 function buildQuery(params = {}) {
   const query = new URLSearchParams()
   const keys = [
+    'country',
+    'operator',
+    'campaignId',
     'from',
     'to',
     'eventType',

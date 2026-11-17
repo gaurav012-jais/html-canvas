@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
   Check,
@@ -7,10 +8,12 @@ import {
   FileCode,
   Plus,
   Trash2,
+  SlidersHorizontal,
 } from 'lucide-react'
 import Button from '../../components/ui/Button'
 import IconButton from '../../components/ui/IconButton'
 import Modal from '../../components/common/Modal'
+import VendorCappingModal from '../../components/dashboard/VendorCappingModal'
 import AllowedCallbackStatusesField, {
   fallbackCallbackStatusesHint,
   effectiveCallbackStatuses,
@@ -49,7 +52,9 @@ export default function VendorAssignModal({
   onToggleTrackingActive,
   onSavePayoutPercent,
   onSaveTrackingStatuses,
+  onSaveVendorCapping,
 }) {
+  const [selectedVendorForCapping, setSelectedVendorForCapping] = useState(null)
   const addToast = useStore((s) => s.addToast)
   const origin = typeof window !== 'undefined' ? window.location.origin : ''
   const actions = flow.assignmentActions || {}
@@ -251,6 +256,23 @@ export default function VendorAssignModal({
                         `}
                       />
                     </button>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedVendorForCapping({ vendor, tracking: t })}
+                      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-medium border transition-colors ${
+                        t.cappingEnabled
+                          ? 'border-accent bg-accent-muted/40 text-accent font-semibold'
+                          : 'border-border bg-bg-muted/30 text-fg-muted hover:text-fg hover:border-fg-subtle'
+                      }`}
+                      title="Configure vendor capping"
+                    >
+                      <SlidersHorizontal className="w-3 h-3" />
+                      <span>
+                        {t.cappingEnabled && t.cappingLimit
+                          ? `${t.cappingLimit} ${t.cappingMetric === 'clicks' ? 'clks' : 'conv'}`
+                          : 'Cap'}
+                      </span>
+                    </button>
                     {actions.downloadApiGuide ? (
                       <IconButton
                         onClick={() => downloadVendorApiGuide(t, vendor)}
@@ -329,6 +351,15 @@ export default function VendorAssignModal({
           </div>
         )}
       </div>
+
+      <VendorCappingModal
+        isOpen={Boolean(selectedVendorForCapping)}
+        onClose={() => setSelectedVendorForCapping(null)}
+        vendor={selectedVendorForCapping?.vendor}
+        tracking={selectedVendorForCapping?.tracking}
+        campaign={campaign}
+        onSave={onSaveVendorCapping}
+      />
     </Modal>
   )
 }

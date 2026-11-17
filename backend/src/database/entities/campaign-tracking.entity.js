@@ -40,6 +40,39 @@ export const CampaignTrackingSchema = new EntitySchema({
       type: 'text',
       nullable: true,
     },
+    cappingEnabled: {
+      name: 'capping_enabled',
+      type: 'boolean',
+      default: false,
+    },
+    cappingMetric: {
+      name: 'capping_metric',
+      type: 'varchar',
+      length: 16,
+      default: 'conversions',
+    },
+    cappingLimit: {
+      name: 'capping_limit',
+      type: 'int',
+      nullable: true,
+    },
+    cappingAction: {
+      name: 'capping_action',
+      type: 'varchar',
+      length: 16,
+      default: 'stop',
+    },
+    cappingInterval: {
+      name: 'capping_interval',
+      type: 'varchar',
+      length: 16,
+      default: 'daily',
+    },
+    fallbackCampaignId: {
+      name: 'fallback_campaign_id',
+      type: 'int',
+      nullable: true,
+    },
     createdAt: {
       name: 'created_at',
       type: 'timestamp',

@@ -195,6 +195,28 @@ function CampaignDetailPage() {
           typeof t.allowedCallbackStatuses === 'string'
             ? t.allowedCallbackStatuses.trim() || null
             : t.allowedCallbackStatuses || null,
+        cappingEnabled: Boolean(t.cappingEnabled),
+        cappingMetric:
+          String(t.cappingMetric || '').toLowerCase() === 'clicks'
+            ? 'clicks'
+            : 'conversions',
+        cappingLimit:
+          t.cappingLimit != null && t.cappingLimit !== ''
+            ? parseInt(t.cappingLimit, 10)
+            : null,
+        cappingAction:
+          String(t.cappingAction || '').toLowerCase() === 'fallback'
+            ? 'fallback'
+            : 'stop',
+        cappingInterval: ['daily', 'weekly', 'monthly', 'total'].includes(
+          String(t.cappingInterval || '').toLowerCase(),
+        )
+          ? String(t.cappingInterval).toLowerCase()
+          : 'daily',
+        fallbackCampaignId:
+          t.fallbackCampaignId != null && t.fallbackCampaignId !== ''
+            ? parseInt(t.fallbackCampaignId, 10)
+            : null,
       }))
       .filter((t) => t.vendorId)
 
@@ -315,6 +337,24 @@ function CampaignDetailPage() {
           : 'Cleared — this assignment uses the vendor default',
         'success',
       )
+    } finally {
+      setAssigningVendor(false)
+    }
+  }
+
+  const handleSaveVendorCapping = async (vendorId, cappingData) => {
+    if (!campaign) return
+    const current = serializeTrackings(campaign.trackings)
+    setAssigningVendor(true)
+    try {
+      await updateCampaign(campaign.id, {
+        trackings: current.map((t) =>
+          t.vendorId === Number(vendorId) ? { ...t, ...cappingData } : t,
+        ),
+      })
+      useStore
+        .getState()
+        .addToast('Vendor capping saved successfully', 'success')
     } finally {
       setAssigningVendor(false)
     }
@@ -629,6 +669,7 @@ function CampaignDetailPage() {
         onToggleTrackingActive={handleToggleTrackingActive}
         onSavePayoutPercent={handleSavePayoutPercent}
         onSaveTrackingStatuses={handleSaveTrackingStatuses}
+        onSaveVendorCapping={handleSaveVendorCapping}
       />
 
       <CampaignApiConfigModal

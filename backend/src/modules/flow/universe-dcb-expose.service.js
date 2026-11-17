@@ -585,6 +585,7 @@ export const createUniverseDcbExposeService = (
       await cappingService.incrementCampaignClickCount(
         campaign.id,
         campaign.cappingInterval,
+        vendor.id,
       );
     }
     if (!phone) throw httpError('MSISDN is required', 400, 'MSISDN_REQUIRED');
@@ -910,6 +911,14 @@ export const createUniverseDcbExposeService = (
           err.providerLog = providerLog;
           throw err;
         }
+
+        await cappingService
+          .incrementCampaignConversionCount(
+            ctx.campaign.id,
+            ctx.campaign.cappingInterval,
+            ctx.vendor.id,
+          )
+          .catch(() => {});
 
         const payload = {
           verified: true,

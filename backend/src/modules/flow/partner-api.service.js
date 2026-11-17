@@ -254,7 +254,7 @@ export const createPartnerApiService = () => {
       return empty;
     }
 
-    if (input.visitId) {
+    if (input.visitId && !input.skipCache && !input.bypassCache) {
       const cached = await apiCallLogService
         .findLatestSuccessfulChecksub(input.visitId, input.phone)
         .catch(() => null);

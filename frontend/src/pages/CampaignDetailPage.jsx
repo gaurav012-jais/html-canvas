@@ -38,6 +38,7 @@ import { isApiExposeCampaign, isDcbApiExposeCampaign } from '../components/flow/
 import { downloadTextFile } from '../utils/download'
 import CampaignApiConfigModal from '../components/dashboard/CampaignApiConfigModal'
 import CampaignCappingModal from '../components/dashboard/CampaignCappingModal'
+import VendorCappingModal from '../components/dashboard/VendorCappingModal'
 import FailedBreakdownBadge from './campaignDetail/FailedBreakdownBadge'
 import { formatDate, getDateRangeForPreset, DEFAULT_TIMEZONE, shiftDateString } from '../utils/date'
 
@@ -276,6 +277,28 @@ function CampaignDetailPage() {
           typeof t.allowedCallbackStatuses === 'string'
             ? t.allowedCallbackStatuses.trim() || null
             : t.allowedCallbackStatuses || null,
+        cappingEnabled: Boolean(t.cappingEnabled),
+        cappingMetric:
+          String(t.cappingMetric || '').toLowerCase() === 'clicks'
+            ? 'clicks'
+            : 'conversions',
+        cappingLimit:
+          t.cappingLimit != null && t.cappingLimit !== ''
+            ? parseInt(t.cappingLimit, 10)
+            : null,
+        cappingAction:
+          String(t.cappingAction || '').toLowerCase() === 'fallback'
+            ? 'fallback'
+            : 'stop',
+        cappingInterval: ['daily', 'weekly', 'monthly', 'total'].includes(
+          String(t.cappingInterval || '').toLowerCase(),
+        )
+          ? String(t.cappingInterval).toLowerCase()
+          : 'daily',
+        fallbackCampaignId:
+          t.fallbackCampaignId != null && t.fallbackCampaignId !== ''
+            ? parseInt(t.fallbackCampaignId, 10)
+            : null,
       }))
       .filter((t) => t.vendorId)
 
@@ -396,6 +419,26 @@ function CampaignDetailPage() {
           : 'Cleared — this assignment uses the vendor default',
         'success',
       )
+    } finally {
+      setAssigningVendor(false)
+    }
+  }
+
+  const [selectedVendorForCapping, setSelectedVendorForCapping] = useState(null)
+
+  const handleSaveVendorCapping = async (vendorId, cappingData) => {
+    if (!campaign) return
+    const current = serializeTrackings(campaign.trackings)
+    setAssigningVendor(true)
+    try {
+      await updateCampaign(campaign.id, {
+        trackings: current.map((t) =>
+          t.vendorId === Number(vendorId) ? { ...t, ...cappingData } : t,
+        ),
+      })
+      useStore
+        .getState()
+        .addToast('Vendor capping saved successfully', 'success')
     } finally {
       setAssigningVendor(false)
     }
@@ -1206,6 +1249,23 @@ function CampaignDetailPage() {
                           `}
                         />
                       </button>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedVendorForCapping({ vendor, tracking: t })}
+                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-medium border transition-colors ${
+                          t.cappingEnabled
+                            ? 'border-accent bg-accent-muted/40 text-accent font-semibold'
+                            : 'border-border bg-bg-muted/30 text-fg-muted hover:text-fg hover:border-fg-subtle'
+                        }`}
+                        title="Configure vendor capping"
+                      >
+                        <SlidersHorizontal className="w-3 h-3" />
+                        <span>
+                          {t.cappingEnabled && t.cappingLimit
+                            ? `${t.cappingLimit} ${t.cappingMetric === 'clicks' ? 'clks' : 'conv'}`
+                            : 'Cap'}
+                        </span>
+                      </button>
                       {apiExpose && (
                         <IconButton
                           onClick={() => downloadVendorApiGuide(t, vendor)}
@@ -1297,6 +1357,15 @@ function CampaignDetailPage() {
         isOpen={showCappingModal}
         onClose={() => setShowCappingModal(false)}
         campaignId={campaign.id}
+      />
+
+      <VendorCappingModal
+        isOpen={Boolean(selectedVendorForCapping)}
+        onClose={() => setSelectedVendorForCapping(null)}
+        vendor={selectedVendorForCapping?.vendor}
+        tracking={selectedVendorForCapping?.tracking}
+        campaign={campaign}
+        onSave={handleSaveVendorCapping}
       />
     </AppShell>
   )

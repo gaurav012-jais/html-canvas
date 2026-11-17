@@ -16,6 +16,8 @@ import { Campaign } from '../../database/entities/campaign.entity.js';
 import { ApiCallType } from '../../database/entities/api-call-log.entity.js';
 import { redisService } from '../../common/services/redis.service.js';
 import { orangeBfProvider, ORANGE_BF_DEFAULTS } from './orange-bf.provider.js';
+import { universeDcbProvider } from './universe-dcb.provider.js';
+import { DCB_OUTCOMES, normalizeUniverseDcbResponse } from './helpers/universe-dcb-normalizer.js';
 import { partnerApiService } from './partner-api.service.js';
 import { apiCallLogService } from './api-call-log.service.js';
 import { analyticsService } from '../analytics/analytics.service.js';
@@ -48,7 +50,15 @@ const safeParseJson = (raw) => {
  */
 export const classifyChecksubStatus = (rawStatus) => {
   const s = String(rawStatus || '').trim().toUpperCase();
-  if (s === 'ACTIVE' || s === 'ACT' || s === '1' || s === 'SUBSCRIBED' || s === 'SUCCESS') {
+  if (
+    s === 'ACTIVE' ||
+    s === 'ACT' ||
+    s === '1' ||
+    s === 'SUBSCRIBED' ||
+    s === 'SUCCESS' ||
+    s === 'ENTITLED' ||
+    s === 'TRIAL_ACTIVE'
+  ) {
     return {
       statusLabel: 'ACTIVE',
       isSuccess: true,
@@ -60,13 +70,13 @@ export const classifyChecksubStatus = (rawStatus) => {
       isSuccess: false,
     };
   }
-  if (s.includes('PARK')) {
+  if (s.includes('PARK') || s.includes('LOW_BALANCE')) {
     return {
       statusLabel: 'PARKING',
       isSuccess: false,
     };
   }
-  if (s.includes('PENDING')) {
+  if (s.includes('PENDING') || s.includes('WAITING')) {
     return {
       statusLabel: 'PENDING',
       isSuccess: false,
@@ -82,6 +92,16 @@ export const classifyChecksubStatus = (rawStatus) => {
     statusLabel: s || 'FAILED',
     isSuccess: false,
   };
+};
+
+const getDcbEndpointUrl = (baseUrl, path = '/api/dcb/subscriptions') => {
+  const base = String(baseUrl || '').trim();
+  if (!base) return path;
+  try {
+    return new URL(path, base.endsWith('/') ? base : `${base}/`).toString();
+  } catch {
+    return `${base}${path}`;
+  }
 };
 
 /**
@@ -182,8 +202,9 @@ const processRow = async (postback, { force = false } = {}) => {
       ? await getRepository(ApiConfig).findOne({ where: { campaignId: parseInt(campaignId, 10) } })
       : null;
 
-    const isOrangeBf =
-      String(campaign?.verificationMode || '').toUpperCase() === 'ORANGE_BF';
+    const vMode = String(campaign?.verificationMode || '').toUpperCase();
+    const isOrangeBf = vMode === 'ORANGE_BF';
+    const isUniverseDcb = vMode === 'UNIVERSE_DCB';
 
     let checkResult = null;
     let rawResponse = {};
@@ -213,6 +234,42 @@ const processRow = async (postback, { force = false } = {}) => {
       rawResponse = checkResult.rawResponse || {};
       const interpreted = interpretChecksubResponse(rawResponse, config.checksubConfigJson);
       rawStatusValue = interpreted?.status || checkResult.outcome || '';
+    } else if (isUniverseDcb && apiConfig?.dcbConfigJson) {
+      callType = ApiCallType.DCB_SUBSCRIPTIONS;
+      console.log(`${LOG_PREFIX} Calling Universe DCB getSubscriptions for postback id=${id}, msisdn=${msisdn}`);
+      const dcbConfig = safeParseJson(apiConfig.dcbConfigJson);
+      try {
+        const dcbResp = await universeDcbProvider.getSubscriptions(dcbConfig, {
+          msisdn,
+          serviceId: campaign?.serviceId || dcbConfig.serviceId,
+        });
+        requestUrl = getDcbEndpointUrl(dcbConfig.baseUrl, '/api/dcb/subscriptions');
+        rawResponse = dcbResp.data || {};
+        const normalized = normalizeUniverseDcbResponse(rawResponse, dcbConfig, {
+          serviceId: campaign?.serviceId || dcbConfig.serviceId,
+        });
+        rawStatusValue =
+          normalized?.outcome === DCB_OUTCOMES.ENTITLED
+            ? 'ACTIVE'
+            : (normalized?.status || normalized?.outcome || '');
+        checkResult = {
+          success: Boolean(rawStatusValue && rawStatusValue !== 'TERMINAL_FAILURE' && rawStatusValue !== 'PARSE_ERROR'),
+          httpStatus: dcbResp.status || 200,
+          outcome: rawStatusValue,
+          rawResponse,
+        };
+      } catch (dcbErr) {
+        console.warn(`${LOG_PREFIX} Universe DCB checksub error:`, dcbErr.message);
+        rawResponse = dcbErr.providerData || { error: dcbErr.message };
+        rawStatusValue = dcbErr.operatorMessage || dcbErr.code || 'FAILED';
+        checkResult = {
+          success: false,
+          httpStatus: dcbErr.providerStatus || 500,
+          outcome: rawStatusValue,
+          rawResponse,
+          errorMessage: dcbErr.message,
+        };
+      }
     } else if (apiConfig?.subscriptionApi) {
       callType = ApiCallType.CHECKSUB;
       console.log(`${LOG_PREFIX} Calling partnerApiService.checkSubscription for postback id=${id}, msisdn=${msisdn}`);
@@ -221,6 +278,10 @@ const processRow = async (postback, { force = false } = {}) => {
         msisdn,
         visitId: fresh.visitId,
         campaignId,
+        country: campaign?.country,
+        operator: campaign?.operator,
+        serviceId: campaign?.serviceId,
+        skipCache: true,
       });
       requestUrl = apiConfig.subscriptionApi;
       rawResponse = checkOutcome;
@@ -287,7 +348,7 @@ const processRow = async (postback, { force = false } = {}) => {
             targetVisitId,
             'CHECKSUB_30M',
             {
-              source: isOrangeBf ? 'orange_bf' : 'checksub',
+              source: isOrangeBf ? 'orange_bf' : isUniverseDcb ? 'universe_dcb' : 'checksub',
               phone: msisdn,
               status: statusLabel,
               success: isSuccess,

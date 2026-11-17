@@ -275,6 +275,14 @@ function useShadowInteractions({
       const currentPage = pageDataRef.current
       const fromPage = currentPage?.pageType
 
+      if (String(fromPage || '').toUpperCase() === 'THANKYOU') {
+        const dest = String(currentPage?.successRedirect || currentPage?.successRedirectUrl || '').trim()
+        if (dest && isExternalHttpRedirect(dest)) {
+          window.location.assign(dest)
+          return
+        }
+      }
+
       // Single-page subscribe: hit campaign Subscribe API, then button destinations
       if (action === 'SUBSCRIBE_ROUTE') {
         transitionLockRef.current = true

@@ -306,7 +306,7 @@ function useFlowPages({
   // Fresh landing: wait for HE detect before HOME so fail/success redirects never flash HOME.
   // Do NOT depend on searchParams — cachePage updates step/msisdn and would re-boot in a loop.
   useEffect(() => {
-    if (!country || !operator) return undefined
+    if ((!country || !operator) && !campid && !trackingCampid) return undefined
     let cancelled = false
 
     async function waitForHeDetect(maxMs = 12000) {

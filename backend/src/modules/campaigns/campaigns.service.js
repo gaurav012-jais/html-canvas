@@ -661,6 +661,28 @@ export const createCampaignsService = () => {
               typeof t.allowedCallbackStatuses === 'string'
                 ? t.allowedCallbackStatuses.trim() || null
                 : null,
+            cappingEnabled: Boolean(t.cappingEnabled),
+            cappingMetric:
+              String(t.cappingMetric || '').toLowerCase() === 'clicks'
+                ? 'clicks'
+                : 'conversions',
+            cappingLimit:
+              t.cappingLimit != null && t.cappingLimit !== ''
+                ? parseInt(t.cappingLimit, 10)
+                : null,
+            cappingAction:
+              String(t.cappingAction || '').toLowerCase() === 'fallback'
+                ? 'fallback'
+                : 'stop',
+            cappingInterval: ['daily', 'weekly', 'monthly', 'total'].includes(
+              String(t.cappingInterval || '').toLowerCase(),
+            )
+              ? String(t.cappingInterval).toLowerCase()
+              : 'daily',
+            fallbackCampaignId:
+              t.fallbackCampaignId != null && t.fallbackCampaignId !== ''
+                ? parseInt(t.fallbackCampaignId, 10)
+                : null,
           })),
         );
       }

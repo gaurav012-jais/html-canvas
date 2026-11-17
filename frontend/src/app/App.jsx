@@ -1,5 +1,5 @@
 import { memo } from 'react'
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, Navigate, useParams, useSearchParams } from 'react-router-dom'
 import GlobalErrorBoundary from '../components/common/GlobalErrorBoundary'
 import ToastContainer from '../components/common/Toast'
 import ScreenReaderAnnouncer from '../components/common/ScreenReaderAnnouncer'
@@ -31,6 +31,16 @@ function Protected({ children }) {
 
 function AdminOnly({ children }) {
   return <RequireAdmin>{children}</RequireAdmin>
+}
+
+function PublicFlowRedirect() {
+  const { campid, countryCode, operatorCode } = useParams()
+  const [searchParams] = useSearchParams()
+  const nextParams = new URLSearchParams(searchParams)
+  if (campid) nextParams.set('campid', campid)
+  if (countryCode && !nextParams.has('country')) nextParams.set('country', countryCode)
+  if (operatorCode && !nextParams.has('operator')) nextParams.set('operator', operatorCode)
+  return <Navigate to={`/subscription?${nextParams.toString()}`} replace />
 }
 
 function App() {
@@ -90,6 +100,8 @@ function App() {
               <Route path="/users" element={<AdminOnly><UsersPage /></AdminOnly>} />
               <Route path="/admin/cache" element={<AdminOnly><CacheManagementPage /></AdminOnly>} />
               <Route path="/cache" element={<Navigate to="/admin/cache" replace />} />
+              <Route path="/flow/:campid" element={<PublicFlowRedirect />} />
+              <Route path="/flow/:countryCode/:operatorCode/:campid" element={<PublicFlowRedirect />} />
               <Route path="/subscription" element={<SubscriptionPage />} />
               <Route path="/" element={<Navigate to="/dashboard" replace />} />
               <Route path="*" element={<Navigate to="/dashboard" replace />} />

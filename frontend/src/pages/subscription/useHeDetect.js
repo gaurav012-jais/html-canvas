@@ -52,7 +52,7 @@ function useHeDetect({
   vidRef,
 }) {
   useEffect(() => {
-    if (!country || !operator) {
+    if ((!country || !operator) && !campid && !trackingCampid) {
       phoneResolvingRef.current = false
       heExitPendingRef.current = false
       window.setTimeout(() => {

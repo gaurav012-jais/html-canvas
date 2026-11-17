@@ -97,6 +97,62 @@ export const getPeriodMetadata = (
   };
 };
 
+/**
+ * Returns { redisKey, periodStart, ttl } for vendor capping on a campaign and interval in IST.
+ * - daily: resets every day at 00:00 IST
+ * - weekly: resets every Monday at 00:00 IST
+ * - monthly: resets on 1st of every month at 00:00 IST
+ * - total: lifetime / no automatic reset
+ */
+export const getVendorPeriodMetadata = (
+  campaignId,
+  vendorId,
+  interval = 'daily',
+  now = new Date(),
+  metric = 'clicks',
+) => {
+  const normInterval = String(interval || 'daily').toLowerCase();
+  const normMetric =
+    String(metric || 'clicks').toLowerCase() === 'conversions'
+      ? 'conv'
+      : 'count';
+  const { year, month, ymd } = getZonedDateParts(now, DEFAULT_TIMEZONE);
+  const vId = Number(vendorId) || 0;
+
+  if (normInterval === 'total' || normInterval === 'lifetime') {
+    return {
+      redisKey: `capping:vendor:${normMetric}:${campaignId}:${vId}:total`,
+      periodStart: null,
+      ttl: 86400 * 365,
+    };
+  }
+
+  if (normInterval === 'weekly') {
+    const mondayYmd = getMondayYmd(ymd);
+    return {
+      redisKey: `capping:vendor:${normMetric}:${campaignId}:${vId}:weekly:${mondayYmd}`,
+      periodStart: zonedDayBound(mondayYmd, DEFAULT_TIMEZONE, 'start'),
+      ttl: 86400 * 14,
+    };
+  }
+
+  if (normInterval === 'monthly') {
+    const firstDayYmd = `${year}-${month}-01`;
+    return {
+      redisKey: `capping:vendor:${normMetric}:${campaignId}:${vId}:monthly:${year}-${month}`,
+      periodStart: zonedDayBound(firstDayYmd, DEFAULT_TIMEZONE, 'start'),
+      ttl: 86400 * 60,
+    };
+  }
+
+  // Default: daily
+  return {
+    redisKey: `capping:vendor:${normMetric}:${campaignId}:${vId}:daily:${ymd}`,
+    periodStart: zonedDayBound(ymd, DEFAULT_TIMEZONE, 'start'),
+    ttl: 86400 * 2,
+  };
+};
+
 export const createCappingService = () => {
   const getCampaignRepo = () => getRepository(Campaign);
   const getTrackingRepo = () => getRepository(CampaignTracking);
@@ -140,7 +196,16 @@ export const createCappingService = () => {
     return count;
   };
 
-  const incrementCampaignClickCount = async (campaignId, interval = 'daily') => {
+  const incrementCampaignClickCount = async (
+    campaignId,
+    interval = 'daily',
+    vendorId = null,
+  ) => {
+    if (vendorId) {
+      await incrementVendorClickCount(campaignId, vendorId, interval).catch(
+        () => {},
+      );
+    }
     const { redisKey, ttl } = getPeriodMetadata(
       campaignId,
       interval,
@@ -158,6 +223,81 @@ export const createCappingService = () => {
     } catch (err) {
       console.warn(
         `Failed to increment click count for campaign ${campaignId}: ${err.message}`,
+      );
+      return null;
+    }
+  };
+
+  const getVendorClickCount = async (
+    campaignId,
+    vendorId,
+    interval = 'daily',
+  ) => {
+    if (!campaignId || !vendorId) return 0;
+    const { redisKey, periodStart, ttl } = getVendorPeriodMetadata(
+      campaignId,
+      vendorId,
+      interval,
+    );
+    try {
+      const cached = await redisService.get(redisKey);
+      if (cached !== null && cached !== undefined) {
+        return parseInt(cached, 10) || 0;
+      }
+    } catch {
+      // redis error fallback to db
+    }
+
+    let count = 0;
+    try {
+      const qb = getVisitRepo()
+        .createQueryBuilder('v')
+        .where('v.campaign_id = :campaignId', { campaignId })
+        .andWhere('v.vendor_id = :vendorId', { vendorId });
+
+      if (periodStart) {
+        qb.andWhere('v.created_at >= :periodStart', { periodStart });
+      }
+
+      count = await qb.getCount();
+
+      try {
+        await redisService.set(redisKey, count, ttl);
+      } catch {
+        // ignore redis error
+      }
+    } catch (err) {
+      console.warn(
+        `Failed to get click count for campaign ${campaignId} vendor ${vendorId}: ${err.message}`,
+      );
+    }
+
+    return count;
+  };
+
+  const incrementVendorClickCount = async (
+    campaignId,
+    vendorId,
+    interval = 'daily',
+  ) => {
+    if (!campaignId || !vendorId) return null;
+    const { redisKey, ttl } = getVendorPeriodMetadata(
+      campaignId,
+      vendorId,
+      interval,
+      new Date(),
+      'clicks',
+    );
+    try {
+      const nextVal = await redisService.incr(redisKey, ttl);
+      if (nextVal > 0) return nextVal;
+      const curr = await getVendorClickCount(campaignId, vendorId, interval);
+      const manualNext = curr + 1;
+      await redisService.set(redisKey, manualNext, ttl);
+      return manualNext;
+    } catch (err) {
+      console.warn(
+        `Failed to increment click count for campaign ${campaignId} vendor ${vendorId}: ${err.message}`,
       );
       return null;
     }
@@ -220,7 +360,15 @@ export const createCappingService = () => {
   const incrementCampaignConversionCount = async (
     campaignId,
     interval = 'daily',
+    vendorId = null,
   ) => {
+    if (vendorId) {
+      await incrementVendorConversionCount(
+        campaignId,
+        vendorId,
+        interval,
+      ).catch(() => {});
+    }
     const { redisKey, ttl } = getPeriodMetadata(
       campaignId,
       interval,
@@ -243,11 +391,107 @@ export const createCappingService = () => {
     }
   };
 
+  const getVendorConversionCount = async (
+    campaignId,
+    vendorId,
+    interval = 'daily',
+  ) => {
+    if (!campaignId || !vendorId) return 0;
+    const { redisKey, periodStart, ttl } = getVendorPeriodMetadata(
+      campaignId,
+      vendorId,
+      interval,
+      new Date(),
+      'conversions',
+    );
+    try {
+      const cached = await redisService.get(redisKey);
+      if (cached !== null && cached !== undefined) {
+        return parseInt(cached, 10) || 0;
+      }
+    } catch {
+      // redis error fallback to db
+    }
+
+    let count = 0;
+    try {
+      const qb = getVisitRepo()
+        .createQueryBuilder('v')
+        .where('v.campaign_id = :campaignId', { campaignId })
+        .andWhere('v.vendor_id = :vendorId', { vendorId })
+        .andWhere(
+          '(v.visit_status IN (:...convStatuses) OR v.otp_verified_at IS NOT NULL)',
+          {
+            convStatuses: [
+              VisitStatus.SUCCESS,
+              VisitStatus.SUBSCRIBED,
+              'OTP_VERIFIED',
+              'CONFIRMED',
+            ],
+          },
+        );
+
+      if (periodStart) {
+        qb.andWhere('v.created_at >= :periodStart', { periodStart });
+      }
+
+      count = await qb.getCount();
+
+      try {
+        await redisService.set(redisKey, count, ttl);
+      } catch {
+        // ignore redis error
+      }
+    } catch (err) {
+      console.warn(
+        `Failed to get conversion count for campaign ${campaignId} vendor ${vendorId}: ${err.message}`,
+      );
+    }
+
+    return count;
+  };
+
+  const incrementVendorConversionCount = async (
+    campaignId,
+    vendorId,
+    interval = 'daily',
+  ) => {
+    if (!campaignId || !vendorId) return null;
+    const { redisKey, ttl } = getVendorPeriodMetadata(
+      campaignId,
+      vendorId,
+      interval,
+      new Date(),
+      'conversions',
+    );
+    try {
+      const nextVal = await redisService.incr(redisKey, ttl);
+      if (nextVal > 0) return nextVal;
+      const curr = await getVendorConversionCount(
+        campaignId,
+        vendorId,
+        interval,
+      );
+      const manualNext = curr + 1;
+      await redisService.set(redisKey, manualNext, ttl);
+      return manualNext;
+    } catch (err) {
+      console.warn(
+        `Failed to increment conversion count for campaign ${campaignId} vendor ${vendorId}: ${err.message}`,
+      );
+      return null;
+    }
+  };
+
   const resolveVendorId = async (vid, vendorId) => {
     if (vendorId != null && !Number.isNaN(Number(vendorId))) {
       return Number(vendorId);
     }
     if (vid) {
+      const numVid = Number(vid);
+      if (!Number.isNaN(numVid) && Number.isInteger(numVid) && numVid > 0) {
+        return numVid;
+      }
       const attr = await partnersService.resolveAttribution(vid).catch(() => ({}));
       if (attr?.vendorId) return Number(attr.vendorId);
     }
@@ -267,135 +511,261 @@ export const createCappingService = () => {
   };
 
   /**
-   * Evaluate if campaign reached its capping limit (clicks or conversions), and determine action.
+   * Evaluate if campaign or vendor reached its capping limit (clicks or conversions), and determine action.
+   * Checks campaign capping first; if allowed, checks vendor capping (on CampaignTracking).
    * Returns:
-   *  - { isCapped: false, action: 'allow' }
-   *  - { isCapped: true, action: 'stop', reason: string }
-   *  - { isCapped: true, action: 'fallback', targetCampaign: object, resolvedVendorId: number }
+   *  - { isCapped: false, action: 'allow', resolvedVendorId }
+   *  - { isCapped: true, action: 'stop', cappedEntity: 'campaign'|'vendor', reason: string, ... }
+   *  - { isCapped: true, action: 'fallback', cappedEntity: 'campaign'|'vendor', targetCampaign: object, resolvedVendorId: number }
    */
   const evaluateCapping = async (campaign, { vid, vendorId } = {}) => {
-    if (!campaign || !campaign.cappingEnabled) {
+    if (!campaign) {
       return { isCapped: false, action: 'allow' };
     }
 
-    const limit =
-      campaign.cappingLimit != null ? Number(campaign.cappingLimit) : null;
-    if (!limit || limit <= 0) {
-      return { isCapped: false, action: 'allow' };
-    }
+    const resolvedVendorId = await resolveVendorId(vid, vendorId);
 
-    const interval = campaign.cappingInterval || 'daily';
-    const metric = String(campaign.cappingMetric || 'conversions').toLowerCase();
-    const currentCount =
-      metric === 'clicks'
-        ? await getCampaignClickCount(campaign.id, interval)
-        : await getCampaignConversionCount(campaign.id, interval);
-
-    if (currentCount < limit) {
-      return { isCapped: false, action: 'allow', currentCount, limit, metric };
-    }
-
-    // Cap limit reached!
-    const action = String(campaign.cappingAction || 'stop').toLowerCase();
-    if (action !== 'fallback' || !campaign.fallbackCampaignId) {
-      return {
-        isCapped: true,
-        action: 'stop',
-        currentCount,
-        limit,
-        reason: 'LIMIT_REACHED',
-      };
-    }
-
-    // Fallback requested:
-    const fallbackCampaign = await getCampaignRepo().findOne({
-      where: { id: Number(campaign.fallbackCampaignId) },
-      relations: {
-        marketOperator: { country: true },
-        trackings: { vendor: true },
-      },
-    });
-
-    if (!fallbackCampaign || !fallbackCampaign.active) {
-      return {
-        isCapped: true,
-        action: 'stop',
-        currentCount,
-        limit,
-        reason: 'FALLBACK_CAMPAIGN_INACTIVE',
-      };
-    }
-
-    // Check if target fallback campaign itself has reached its capping limit
-    if (
-      fallbackCampaign.cappingEnabled &&
-      fallbackCampaign.cappingLimit != null
-    ) {
-      const targetLimit = Number(fallbackCampaign.cappingLimit);
-      if (targetLimit > 0) {
-        const targetInterval = fallbackCampaign.cappingInterval || 'daily';
-        const targetMetric = String(
-          fallbackCampaign.cappingMetric || 'conversions',
+    // 1. Evaluate Campaign Capping first (if enabled)
+    if (campaign.cappingEnabled) {
+      const limit =
+        campaign.cappingLimit != null ? Number(campaign.cappingLimit) : null;
+      if (limit && limit > 0) {
+        const interval = campaign.cappingInterval || 'daily';
+        const metric = String(
+          campaign.cappingMetric || 'conversions',
         ).toLowerCase();
-        const targetCount =
-          targetMetric === 'clicks'
-            ? await getCampaignClickCount(fallbackCampaign.id, targetInterval)
-            : await getCampaignConversionCount(fallbackCampaign.id, targetInterval);
+        const currentCount =
+          metric === 'clicks'
+            ? await getCampaignClickCount(campaign.id, interval)
+            : await getCampaignConversionCount(campaign.id, interval);
 
-        if (targetCount >= targetLimit) {
+        if (currentCount >= limit) {
+          // Cap limit reached on campaign!
+          const action = String(campaign.cappingAction || 'stop').toLowerCase();
+          if (action !== 'fallback' || !campaign.fallbackCampaignId) {
+            return {
+              isCapped: true,
+              action: 'stop',
+              cappedEntity: 'campaign',
+              currentCount,
+              limit,
+              metric,
+              resolvedVendorId,
+              reason: 'LIMIT_REACHED',
+            };
+          }
+
+          // Fallback requested on campaign:
+          const fallbackCampaign = await getCampaignRepo().findOne({
+            where: { id: Number(campaign.fallbackCampaignId) },
+            relations: {
+              marketOperator: { country: true },
+              trackings: { vendor: true },
+            },
+          });
+
+          if (!fallbackCampaign || !fallbackCampaign.active) {
+            return {
+              isCapped: true,
+              action: 'stop',
+              cappedEntity: 'campaign',
+              currentCount,
+              limit,
+              metric,
+              resolvedVendorId,
+              reason: 'FALLBACK_CAMPAIGN_INACTIVE',
+            };
+          }
+
+          // Check if target fallback campaign itself has reached its capping limit
+          if (
+            fallbackCampaign.cappingEnabled &&
+            fallbackCampaign.cappingLimit != null
+          ) {
+            const targetLimit = Number(fallbackCampaign.cappingLimit);
+            if (targetLimit > 0) {
+              const targetInterval = fallbackCampaign.cappingInterval || 'daily';
+              const targetMetric = String(
+                fallbackCampaign.cappingMetric || 'conversions',
+              ).toLowerCase();
+              const targetCount =
+                targetMetric === 'clicks'
+                  ? await getCampaignClickCount(fallbackCampaign.id, targetInterval)
+                  : await getCampaignConversionCount(
+                      fallbackCampaign.id,
+                      targetInterval,
+                    );
+
+              if (targetCount >= targetLimit) {
+                return {
+                  isCapped: true,
+                  action: 'stop',
+                  cappedEntity: 'campaign',
+                  currentCount,
+                  limit,
+                  metric,
+                  resolvedVendorId,
+                  fallbackCampaignId: fallbackCampaign.id,
+                  reason: 'FALLBACK_CAMPAIGN_CAPPED',
+                };
+              }
+            }
+          }
+
+          // Check Vendor Assignment on Fallback Campaign
+          if (!resolvedVendorId) {
+            // No vendor assigned/found — redirecting would create an anonymous untracked click
+            return {
+              isCapped: true,
+              action: 'stop',
+              cappedEntity: 'campaign',
+              currentCount,
+              limit,
+              metric,
+              reason: 'VENDOR_NOT_FOUND',
+            };
+          }
+
+          const assigned = await isVendorAssignedToCampaign(
+            fallbackCampaign.id,
+            resolvedVendorId,
+          );
+          if (!assigned) {
+            return {
+              isCapped: true,
+              action: 'stop',
+              cappedEntity: 'campaign',
+              currentCount,
+              limit,
+              metric,
+              resolvedVendorId,
+              fallbackCampaignId: fallbackCampaign.id,
+              reason: 'VENDOR_NOT_ASSIGNED',
+            };
+          }
+
           return {
             isCapped: true,
-            action: 'stop',
+            action: 'fallback',
+            cappedEntity: 'campaign',
+            targetCampaign: fallbackCampaign,
             currentCount,
             limit,
             metric,
-            fallbackCampaignId: fallbackCampaign.id,
-            reason: 'FALLBACK_CAMPAIGN_CAPPED',
+            resolvedVendorId,
           };
         }
       }
     }
 
-    // Check Vendor Assignment on Fallback Campaign
-    const resolvedVendorId = await resolveVendorId(vid, vendorId);
-    if (!resolvedVendorId) {
-      // No vendor assigned/found — redirecting would create an anonymous untracked click
-      return {
-        isCapped: true,
-        action: 'stop',
-        currentCount,
-        limit,
-        metric,
-        reason: 'VENDOR_NOT_FOUND',
-      };
+    // 2. Evaluate Vendor Capping (if vendor is resolved and has cappingEnabled on CampaignTracking)
+    if (resolvedVendorId) {
+      const tracking = await getTrackingRepo().findOne({
+        where: {
+          campaignId: Number(campaign.id),
+          vendorId: Number(resolvedVendorId),
+          active: true,
+        },
+      });
+
+      if (tracking && tracking.cappingEnabled) {
+        const vLimit =
+          tracking.cappingLimit != null ? Number(tracking.cappingLimit) : null;
+        if (vLimit && vLimit > 0) {
+          const vInterval = tracking.cappingInterval || 'daily';
+          const vMetric = String(
+            tracking.cappingMetric || 'conversions',
+          ).toLowerCase();
+          const currentVendorCount =
+            vMetric === 'clicks'
+              ? await getVendorClickCount(
+                  campaign.id,
+                  resolvedVendorId,
+                  vInterval,
+                )
+              : await getVendorConversionCount(
+                  campaign.id,
+                  resolvedVendorId,
+                  vInterval,
+                );
+
+          if (currentVendorCount >= vLimit) {
+            // Vendor cap limit reached!
+            const vAction = String(
+              tracking.cappingAction || 'stop',
+            ).toLowerCase();
+            const targetFallbackId =
+              tracking.fallbackCampaignId || campaign.fallbackCampaignId;
+
+            if (vAction !== 'fallback' || !targetFallbackId) {
+              return {
+                isCapped: true,
+                action: 'stop',
+                cappedEntity: 'vendor',
+                currentCount: currentVendorCount,
+                limit: vLimit,
+                metric: vMetric,
+                resolvedVendorId,
+                reason: 'VENDOR_LIMIT_REACHED',
+              };
+            }
+
+            // Vendor Fallback requested:
+            const fallbackCampaign = await getCampaignRepo().findOne({
+              where: { id: Number(targetFallbackId) },
+              relations: {
+                marketOperator: { country: true },
+                trackings: { vendor: true },
+              },
+            });
+
+            if (!fallbackCampaign || !fallbackCampaign.active) {
+              return {
+                isCapped: true,
+                action: 'stop',
+                cappedEntity: 'vendor',
+                currentCount: currentVendorCount,
+                limit: vLimit,
+                metric: vMetric,
+                resolvedVendorId,
+                reason: 'FALLBACK_CAMPAIGN_INACTIVE',
+              };
+            }
+
+            const assigned = await isVendorAssignedToCampaign(
+              fallbackCampaign.id,
+              resolvedVendorId,
+            );
+            if (!assigned) {
+              return {
+                isCapped: true,
+                action: 'stop',
+                cappedEntity: 'vendor',
+                currentCount: currentVendorCount,
+                limit: vLimit,
+                metric: vMetric,
+                resolvedVendorId,
+                fallbackCampaignId: fallbackCampaign.id,
+                reason: 'VENDOR_NOT_ASSIGNED',
+              };
+            }
+
+            return {
+              isCapped: true,
+              action: 'fallback',
+              cappedEntity: 'vendor',
+              targetCampaign: fallbackCampaign,
+              currentCount: currentVendorCount,
+              limit: vLimit,
+              metric: vMetric,
+              resolvedVendorId,
+            };
+          }
+        }
+      }
     }
 
-    const assigned = await isVendorAssignedToCampaign(
-      fallbackCampaign.id,
-      resolvedVendorId,
-    );
-    if (!assigned) {
-      return {
-        isCapped: true,
-        action: 'stop',
-        currentCount,
-        limit,
-        metric,
-        resolvedVendorId,
-        fallbackCampaignId: fallbackCampaign.id,
-        reason: 'VENDOR_NOT_ASSIGNED',
-      };
-    }
-
-    return {
-      isCapped: true,
-      action: 'fallback',
-      targetCampaign: fallbackCampaign,
-      currentCount,
-      limit,
-      metric,
-      resolvedVendorId,
-    };
+    return { isCapped: false, action: 'allow', resolvedVendorId };
   };
 
   return {
@@ -403,6 +773,10 @@ export const createCappingService = () => {
     incrementCampaignClickCount,
     getCampaignConversionCount,
     incrementCampaignConversionCount,
+    getVendorClickCount,
+    incrementVendorClickCount,
+    getVendorConversionCount,
+    incrementVendorConversionCount,
     resolveVendorId,
     isVendorAssignedToCampaign,
     evaluateCapping,

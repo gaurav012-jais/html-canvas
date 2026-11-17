@@ -155,7 +155,11 @@ export const createAnalyticsService = () => {
       visit.campaignId
     ) {
       cappingService
-        .incrementCampaignConversionCount(visit.campaignId)
+        .incrementCampaignConversionCount(
+          visit.campaignId,
+          'daily',
+          visit.vendorId,
+        )
         .catch(() => {});
     }
 

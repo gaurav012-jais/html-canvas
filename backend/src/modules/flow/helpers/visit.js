@@ -7,6 +7,7 @@ import { redisService } from '../../../common/services/redis.service.js';
 import { splitDualCampids } from '../../markets/helpers/tracking-id.util.js';
 import { heService } from '../he.service.js';
 import { filledTrackingValue } from './placeholder-macro.js';
+import { cappingService } from '../../campaigns/capping.service.js';
 
 export function createFlowVisit(deps) {
   // deps reserved for future wiring; visit helpers use imported services directly
@@ -37,13 +38,18 @@ export function createFlowVisit(deps) {
     const attrCacheKey = `flow:attr:${input.vid || ''}`;
     let attribution = await redisService.get(attrCacheKey);
     if (!attribution) {
-      attribution = await partnersService
-        .resolveAttribution(input.vid)
-        .catch(() => ({
-          vendorId: undefined,
-          affiliateId: null,
-          mismatch: false,
-        }));
+      const numVid = Number(input.vid);
+      if (!Number.isNaN(numVid) && Number.isInteger(numVid) && numVid > 0) {
+        attribution = { vendorId: numVid, affiliateId: null, mismatch: false };
+      } else {
+        attribution = await partnersService
+          .resolveAttribution(input.vid)
+          .catch(() => ({
+            vendorId: undefined,
+            affiliateId: null,
+            mismatch: false,
+          }));
+      }
       await redisService.set(attrCacheKey, attribution, 15);
     }
 
@@ -112,6 +118,13 @@ export function createFlowVisit(deps) {
     /** If a parallel request won, drop our orphan and use the oldest visit. */
     const reconcile = async (createdVisit, ourClickId) => {
       if (!networkRcid) {
+        await cappingService
+          .incrementCampaignClickCount(
+            campaign.id,
+            campaign.cappingInterval,
+            attribution.vendorId,
+          )
+          .catch(() => {});
         return {
           visitId: createdVisit.id,
           clickId: ourClickId,
@@ -129,6 +142,13 @@ export function createFlowVisit(deps) {
           .catch(() => {});
         return reuse(winner);
       }
+      await cappingService
+        .incrementCampaignClickCount(
+          campaign.id,
+          campaign.cappingInterval,
+          attribution.vendorId,
+        )
+        .catch(() => {});
       return {
         visitId: createdVisit.id,
         clickId: ourClickId,

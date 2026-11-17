@@ -60,7 +60,31 @@ export const logsController = {
   }),
 
   allSearch: asyncHandler(async (req, res) => {
-    const campaigns = await campaignsService.findAll(req.user.id);
+    let campaigns = await campaignsService.findAll(req.user.id);
+    const country = String(req.query.country || '').trim().toUpperCase();
+    const operator = String(req.query.operator || '').trim().toLowerCase();
+    const campaignId = req.query.campaignId ? parseInt(req.query.campaignId, 10) : null;
+
+    if (campaignId && !Number.isNaN(campaignId)) {
+      campaigns = campaigns.filter((c) => c.id === campaignId);
+    } else {
+      if (country) {
+        campaigns = campaigns.filter(
+          (c) =>
+            String(c.country || '').toUpperCase() === country ||
+            String(c.marketOperator?.country?.code || '').toUpperCase() === country ||
+            String(c.marketOperator?.country?.name || '').toUpperCase() === country,
+        );
+      }
+      if (operator) {
+        campaigns = campaigns.filter(
+          (c) =>
+            String(c.operator || '').toLowerCase() === operator ||
+            String(c.marketOperator?.code || '').toLowerCase() === operator ||
+            String(c.marketOperator?.name || '').toLowerCase() === operator,
+        );
+      }
+    }
     const campaignIds = campaigns.map((c) => c.id);
     if (campaignIds.length === 0) {
       return res.json({ total: 0, page: 1, size: 25, items: [] });
@@ -72,7 +96,31 @@ export const logsController = {
   }),
 
   allExport: asyncHandler(async (req, res) => {
-    const campaigns = await campaignsService.findAll(req.user.id);
+    let campaigns = await campaignsService.findAll(req.user.id);
+    const country = String(req.query.country || '').trim().toUpperCase();
+    const operator = String(req.query.operator || '').trim().toLowerCase();
+    const campaignId = req.query.campaignId ? parseInt(req.query.campaignId, 10) : null;
+
+    if (campaignId && !Number.isNaN(campaignId)) {
+      campaigns = campaigns.filter((c) => c.id === campaignId);
+    } else {
+      if (country) {
+        campaigns = campaigns.filter(
+          (c) =>
+            String(c.country || '').toUpperCase() === country ||
+            String(c.marketOperator?.country?.code || '').toUpperCase() === country ||
+            String(c.marketOperator?.country?.name || '').toUpperCase() === country,
+        );
+      }
+      if (operator) {
+        campaigns = campaigns.filter(
+          (c) =>
+            String(c.operator || '').toLowerCase() === operator ||
+            String(c.marketOperator?.code || '').toLowerCase() === operator ||
+            String(c.marketOperator?.name || '').toLowerCase() === operator,
+        );
+      }
+    }
     const campaignIds = campaigns.map((c) => c.id);
     const params = buildParams(campaignIds, req.query || {});
     const format = req.query.format === 'xlsx' ? 'xlsx' : 'csv';
@@ -80,7 +128,31 @@ export const logsController = {
   }),
 
   allAggregations: asyncHandler(async (req, res) => {
-    const campaigns = await campaignsService.findAll(req.user.id);
+    let campaigns = await campaignsService.findAll(req.user.id);
+    const country = String(req.query.country || '').trim().toUpperCase();
+    const operator = String(req.query.operator || '').trim().toLowerCase();
+    const campaignId = req.query.campaignId ? parseInt(req.query.campaignId, 10) : null;
+
+    if (campaignId && !Number.isNaN(campaignId)) {
+      campaigns = campaigns.filter((c) => c.id === campaignId);
+    } else {
+      if (country) {
+        campaigns = campaigns.filter(
+          (c) =>
+            String(c.country || '').toUpperCase() === country ||
+            String(c.marketOperator?.country?.code || '').toUpperCase() === country ||
+            String(c.marketOperator?.country?.name || '').toUpperCase() === country,
+        );
+      }
+      if (operator) {
+        campaigns = campaigns.filter(
+          (c) =>
+            String(c.operator || '').toLowerCase() === operator ||
+            String(c.marketOperator?.code || '').toLowerCase() === operator ||
+            String(c.marketOperator?.name || '').toLowerCase() === operator,
+        );
+      }
+    }
     const campaignIds = campaigns.map((c) => c.id);
     if (campaignIds.length === 0) {
       return res.json({
