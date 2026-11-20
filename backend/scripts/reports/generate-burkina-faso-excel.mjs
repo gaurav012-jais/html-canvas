@@ -3,6 +3,14 @@ import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import ExcelJS from 'exceljs';
+import {
+  COLORS,
+  FONTS,
+  THIN_BORDER,
+  addReportHeader,
+  addTableHeader,
+  formatDataRow,
+} from './excel-helpers.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.resolve(__dirname, '../../.env') });
@@ -108,14 +116,12 @@ async function main() {
         OR v.visit_status = 'SUBSCRIBED' 
         OR v.visit_status = 'SUCCESS'
         OR v.otp_verified_at IS NOT NULL
+        OR cp.status = 'sent'
       )
     ORDER BY v.created_at DESC
   `);
-  console.log(
-    `Found ${conversionsQuery.rows.length} converted/OTP-verified leads.`,
-  );
 
-  // 4. Fetch September Daily Breakdown
+  // 4. Fetch Daily Breakdown
   console.log('Fetching September daily stats...');
   const dailyQuery = await client.query(`
     SELECT 
@@ -137,7 +143,7 @@ async function main() {
     ORDER BY date_utc ASC
   `);
 
-  // 5. Fetch Detailed Subscribe Click Events with Phone & Click ID
+  // 5. Fetch Detailed Subscribe Click Events
   console.log('Fetching September Subscribe Click details...');
   const subClicksQuery = await client.query(`
     SELECT 
@@ -161,7 +167,7 @@ async function main() {
     ORDER BY MIN(ve.created_at) DESC
   `);
 
-  // 6. Fetch All Landing Page Visits with Phone & Click ID
+  // 6. Fetch All Landing Page Visits
   console.log('Fetching September All Landing Page visits...');
   const allVisitsQuery = await client.query(`
     SELECT 
@@ -209,114 +215,34 @@ async function main() {
   `);
 
   await client.end();
-  console.log(
-    'All DB queries completed. Building Excel workbook for September...',
-  );
+  console.log('All DB queries completed. Building Excel workbook for September...');
 
-  // Create Workbook
   const workbook = new ExcelJS.Workbook();
   workbook.creator = 'Analytics Engine';
   workbook.created = new Date();
 
-  // Styles
-  const HEADER_FILL = {
-    type: 'pattern',
-    pattern: 'solid',
-    fgColor: { argb: '1E293B' },
-  };
-  const HEADER_FONT = {
-    name: 'Calibri',
-    size: 11,
-    bold: true,
-    color: { argb: 'FFFFFF' },
-  };
-  const ACCENT_FILL = {
-    type: 'pattern',
-    pattern: 'solid',
-    fgColor: { argb: '0284C7' },
-  };
-  const TOTAL_ROW_FILL = {
-    type: 'pattern',
-    pattern: 'solid',
-    fgColor: { argb: 'E2E8F0' },
-  };
-  const KPI_LABEL_FILL = {
-    type: 'pattern',
-    pattern: 'solid',
-    fgColor: { argb: 'F1F5F9' },
-  };
-  const HIGHLIGHT_FILL = {
-    type: 'pattern',
-    pattern: 'solid',
-    fgColor: { argb: 'E0F2FE' },
-  };
-  const THIN_BORDER = {
-    top: { style: 'thin', color: { argb: 'CBD5E1' } },
-    left: { style: 'thin', color: { argb: 'CBD5E1' } },
-    bottom: { style: 'thin', color: { argb: 'CBD5E1' } },
-    right: { style: 'thin', color: { argb: 'CBD5E1' } },
-  };
-
-  const formatHeader = (row, headers) => {
-    row.height = 28;
-    headers.forEach((h, idx) => {
-      const cell = row.getCell(idx + 1);
-      cell.value = h;
-      cell.font = HEADER_FONT;
-      cell.fill = HEADER_FILL;
-      cell.alignment = {
-        horizontal: 'center',
-        vertical: 'middle',
-        wrapText: true,
-      };
-      cell.border = THIN_BORDER;
-    });
-  };
-
-  // ==========================================
-  // SHEET 1: Executive Summary (September)
-  // ==========================================
+  // --------------------------------------------------------------------------
+  // SHEET 1: Executive Summary
+  // --------------------------------------------------------------------------
   console.log('Writing Sheet 1: Executive Summary (September)...');
-  const wsSummary = workbook.addWorksheet('Executive Summary', {
-    views: [{ showGridLines: true }],
+  const wsSummary = workbook.addWorksheet('Executive Summary', { views: [{ showGridLines: true }] });
+
+  addReportHeader(wsSummary, {
+    rangeTitle: 'B2:G2',
+    title: 'BURKINA FASO (ORANGE) - SEPTEMBER 2026 PERFORMANCE REPORT',
+    rangeSubtitle: 'B3:G3',
+    subtitle: 'Report Period: September 2026 (01-Sep-2026 to 30-Sep-2026) | Operator: Orange Burkina Faso | Includes Converted / OTP Verified Details',
   });
-
-  wsSummary.mergeCells('B2:G2');
-  const titleCell = wsSummary.getCell('B2');
-  titleCell.value = 'BURKINA FASO (ORANGE) - SEPTEMBER 2026 PERFORMANCE REPORT';
-  titleCell.font = {
-    name: 'Calibri',
-    size: 16,
-    bold: true,
-    color: { argb: 'FFFFFF' },
-  };
-  titleCell.fill = HEADER_FILL;
-  titleCell.alignment = { horizontal: 'center', vertical: 'middle' };
   wsSummary.getRow(2).height = 40;
-
-  wsSummary.mergeCells('B3:G3');
-  const subTitleCell = wsSummary.getCell('B3');
-  subTitleCell.value =
-    'Report Period: September 2026 (01-Sep-2026 to 30-Sep-2026) | Operator: Orange Burkina Faso | Includes Converted / OTP Verified Details';
-  subTitleCell.font = {
-    name: 'Calibri',
-    size: 10,
-    italic: true,
-    color: { argb: '475569' },
-  };
-  subTitleCell.alignment = { horizontal: 'center', vertical: 'middle' };
   wsSummary.getRow(3).height = 22;
 
   // Metadata Table
   const metaStartRow = 5;
   wsSummary.mergeCells(`B${metaStartRow}:C${metaStartRow}`);
-  wsSummary.getCell(`B${metaStartRow}`).value =
-    'CAMPAIGN CONFIGURATION (SEPTEMBER)';
-  wsSummary.getCell(`B${metaStartRow}`).font = {
-    bold: true,
-    color: { argb: 'FFFFFF' },
-  };
-  wsSummary.getCell(`B${metaStartRow}`).fill = ACCENT_FILL;
+  const metaHdr = wsSummary.getCell(`B${metaStartRow}`);
+  metaHdr.value = 'CAMPAIGN CONFIGURATION (SEPTEMBER)';
+  metaHdr.font = FONTS.HEADER_WHITE;
+  metaHdr.fill = COLORS.ACCENT_FILL;
 
   const metadata = [
     ['Country', 'Burkina Faso (BF)'],
@@ -326,44 +252,32 @@ async function main() {
     ['Tracking Campaign ID', 'BF-OR-17'],
     ['Verification Mode', 'ORANGE_BF (Direct Carrier Billing)'],
     ['Reporting Period', 'September 2026 (01-Sep to 30-Sep)'],
-    [
-      'Converted & OTP Verified Leads',
-      `${conversionsQuery.rows.length.toLocaleString()} leads (with Phone, Click ID & RCID)`,
-    ],
-    [
-      'Total Captured Phones (Sept)',
-      `${Number(overall.visits_with_phone).toLocaleString()} visits (${Number(overall.unique_phones).toLocaleString()} unique)`,
-    ],
-    [
-      'Total Click IDs Tracked (Sept)',
-      `${Number(overall.unique_clicks).toLocaleString()} click IDs (100% tracked)`,
-    ],
+    ['Converted & OTP Verified Leads', `${conversionsQuery.rows.length.toLocaleString()} leads (with Phone, Click ID & RCID)`],
+    ['Total Captured Phones (Sept)', `${Number(overall.visits_with_phone).toLocaleString()} visits (${Number(overall.unique_phones).toLocaleString()} unique)`],
+    ['Total Click IDs Tracked (Sept)', `${Number(overall.unique_clicks).toLocaleString()} click IDs (100% tracked)`],
   ];
 
   metadata.forEach((row, i) => {
     const rIdx = metaStartRow + 1 + i;
-    wsSummary.getCell(`B${rIdx}`).value = row[0];
-    wsSummary.getCell(`B${rIdx}`).font = {
-      bold: true,
-      color: { argb: '334155' },
-    };
-    wsSummary.getCell(`B${rIdx}`).fill = KPI_LABEL_FILL;
-    wsSummary.getCell(`B${rIdx}`).border = THIN_BORDER;
+    const cellKey = wsSummary.getCell(`B${rIdx}`);
+    cellKey.value = row[0];
+    cellKey.font = FONTS.BOLD;
+    cellKey.fill = COLORS.KPI_LABEL_BG;
+    cellKey.border = THIN_BORDER;
 
-    wsSummary.getCell(`C${rIdx}`).value = row[1];
-    wsSummary.getCell(`C${rIdx}`).border = THIN_BORDER;
+    const cellVal = wsSummary.getCell(`C${rIdx}`);
+    cellVal.value = row[1];
+    cellVal.border = THIN_BORDER;
+    cellVal.font = FONTS.REGULAR;
   });
 
-  // KPI Table
+  // KPI Metrics Table
   const kpiStartRow = 5;
   wsSummary.mergeCells(`E${kpiStartRow}:G${kpiStartRow}`);
-  wsSummary.getCell(`E${kpiStartRow}`).value =
-    'SEPTEMBER 2026 PERFORMANCE METRICS';
-  wsSummary.getCell(`E${kpiStartRow}`).font = {
-    bold: true,
-    color: { argb: 'FFFFFF' },
-  };
-  wsSummary.getCell(`E${kpiStartRow}`).fill = ACCENT_FILL;
+  const kpiHdr = wsSummary.getCell(`E${kpiStartRow}`);
+  kpiHdr.value = 'SEPTEMBER 2026 PERFORMANCE METRICS';
+  kpiHdr.font = FONTS.HEADER_WHITE;
+  kpiHdr.fill = COLORS.ACCENT_FILL;
 
   const totalVisits = Number(overall.total_visits);
   const uniqueIps = Number(overall.unique_ips);
@@ -372,208 +286,103 @@ async function main() {
   const confirmViews = Number(overall.confirm_views);
   const otpVerified = Number(overall.otp_verified);
   const subUsers = Number(overall.subscribed_users);
-  const visitsWithPhone = Number(overall.visits_with_phone);
-  const uniquePhones = Number(overall.unique_phones);
 
   const kpis = [
-    [
-      'September Landing Visits (Traffic / Clicks)',
-      totalVisits,
-      '#,##0',
-      'Total landing page pageviews/clicks in Sept',
-    ],
-    [
-      'Unique Visitors (Distinct IP Addresses)',
-      uniqueIps,
-      '#,##0',
-      'Distinct individual IPs reached in Sept',
-    ],
-    [
-      'Unique Ad Click IDs (Tracking Clicks)',
-      Number(overall.unique_clicks),
-      '#,##0',
-      'Unique incoming click IDs tracked in Sept',
-    ],
-    [
-      'Total Subscribe Button Clicks',
-      totalSubClicks,
-      '#,##0',
-      'Total times "Subscribe" CTA was clicked',
-    ],
-    [
-      'Unique Users Clicking Subscribe Button',
-      uniqueSubClicks,
-      '#,##0',
-      'Unique visitors that clicked Subscribe',
-    ],
-    [
-      'Subscribe Click-Through Rate (CTR %)',
-      totalSubClicks / totalVisits,
-      '0.00%',
-      'Subscribe Clicks ÷ Landing Visits',
-    ],
-    [
-      'OTP Verifications (Pin Completed)',
-      otpVerified,
-      '#,##0',
-      'Users that completed OTP verification',
-    ],
-    [
-      'Total Subscribed Users (Conversions)',
-      subUsers,
-      '#,##0',
-      'Successfully billed / active subscribers',
-    ],
-    [
-      'Converted & OTP Verified Leads Total',
-      conversionsQuery.rows.length,
-      '#,##0',
-      'Total leads with OTP verify / conversion in Sept',
-    ],
-    [
-      'Overall Conversion Rate (% of Visits)',
-      subUsers / totalVisits,
-      '0.00%',
-      'Subscribed Users ÷ Landing Page Visits',
-    ],
-    [
-      'Conversion Rate (% of Subscribe Clicks)',
-      subUsers / totalSubClicks,
-      '0.00%',
-      'Subscribed Users ÷ Subscribe Clicks',
-    ],
+    ['September Landing Visits (Traffic / Clicks)', totalVisits, '#,##0', 'Total landing page pageviews/clicks in Sept'],
+    ['Unique Visitors (Distinct IP Addresses)', uniqueIps, '#,##0', 'Distinct individual IPs reached in Sept'],
+    ['Unique Ad Click IDs (Tracking Clicks)', Number(overall.unique_clicks), '#,##0', 'Unique incoming click IDs tracked in Sept'],
+    ['Total Subscribe Button Clicks', totalSubClicks, '#,##0', 'Total times "Subscribe" CTA was clicked'],
+    ['Unique Users Clicking Subscribe Button', uniqueSubClicks, '#,##0', 'Unique visitors that clicked Subscribe'],
+    ['Subscribe Click-Through Rate (CTR %)', totalSubClicks / (totalVisits || 1), '0.00%', 'Subscribe Clicks ÷ Landing Visits'],
+    ['OTP Verifications (Pin Completed)', otpVerified, '#,##0', 'Users that completed OTP verification'],
+    ['Total Subscribed Users (Conversions)', subUsers, '#,##0', 'Successfully billed / active subscribers'],
+    ['Converted & OTP Verified Leads Total', conversionsQuery.rows.length, '#,##0', 'Total leads with OTP verify / conversion in Sept'],
+    ['Overall Conversion Rate (% of Visits)', subUsers / (totalVisits || 1), '0.00%', 'Subscribed Users ÷ Landing Page Visits'],
+    ['Conversion Rate (% of Subscribe Clicks)', subUsers / (totalSubClicks || 1), '0.00%', 'Subscribed Users ÷ Subscribe Clicks'],
   ];
 
   kpis.forEach((row, i) => {
     const rIdx = kpiStartRow + 1 + i;
-    wsSummary.getCell(`E${rIdx}`).value = row[0];
-    wsSummary.getCell(`E${rIdx}`).font = {
-      bold: true,
-      color: { argb: '1E293B' },
-    };
-    wsSummary.getCell(`E${rIdx}`).fill =
-      i === 0 || i === 3 || i === 7 || i === 8
-        ? HIGHLIGHT_FILL
-        : KPI_LABEL_FILL;
-    wsSummary.getCell(`E${rIdx}`).border = THIN_BORDER;
+    const kCell = wsSummary.getCell(`E${rIdx}`);
+    kCell.value = row[0];
+    kCell.font = FONTS.BOLD;
+    kCell.fill = i === 0 || i === 3 || i === 7 || i === 8 ? COLORS.NOTE_BG : COLORS.KPI_LABEL_BG;
+    kCell.border = THIN_BORDER;
 
-    const valCell = wsSummary.getCell(`F${rIdx}`);
-    valCell.value = row[1];
-    valCell.numFmt = row[2];
-    valCell.font = {
-      bold: true,
-      size: 11,
-      color:
-        i === 0 || i === 3 || i === 7 || i === 8
-          ? { argb: '0369A1' }
-          : { argb: '0F172A' },
-    };
-    valCell.alignment = { horizontal: 'right' };
-    valCell.border = THIN_BORDER;
+    const vCell = wsSummary.getCell(`F${rIdx}`);
+    vCell.value = row[1];
+    vCell.numFmt = row[2];
+    vCell.font = { bold: true, size: 11, color: { argb: i === 0 || i === 3 || i === 7 || i === 8 ? '0369A1' : '0F172A' } };
+    vCell.alignment = { horizontal: 'right' };
+    vCell.border = THIN_BORDER;
 
-    const noteCell = wsSummary.getCell(`G${rIdx}`);
-    noteCell.value = row[3];
-    noteCell.font = { italic: true, size: 9, color: { argb: '64748B' } };
-    noteCell.border = THIN_BORDER;
+    const nCell = wsSummary.getCell(`G${rIdx}`);
+    nCell.value = row[3];
+    nCell.font = FONTS.MUTED;
+    nCell.border = THIN_BORDER;
   });
 
-  // Funnel Table Below
+  // Funnel Table
   const funnelStartRow = 19;
   wsSummary.mergeCells(`B${funnelStartRow}:G${funnelStartRow}`);
-  wsSummary.getCell(`B${funnelStartRow}`).value =
-    'SEPTEMBER CONVERSION FUNNEL (LANDING TO SUBSCRIPTION)';
-  wsSummary.getCell(`B${funnelStartRow}`).font = {
-    bold: true,
-    color: { argb: 'FFFFFF' },
-  };
-  wsSummary.getCell(`B${funnelStartRow}`).fill = HEADER_FILL;
+  const fHdr = wsSummary.getCell(`B${funnelStartRow}`);
+  fHdr.value = 'SEPTEMBER CONVERSION FUNNEL (LANDING TO SUBSCRIPTION)';
+  fHdr.font = FONTS.HEADER_WHITE;
+  fHdr.fill = COLORS.HEADER_FILL;
 
-  const funnelHeaders = [
-    'Stage',
-    'Funnel Step Description',
-    'Volume',
-    '% of Landing Visits',
-    '% of Previous Step',
-    'Drop-off Volume',
-  ];
+  const funnelHeaders = ['Stage', 'Funnel Step Description', 'Volume', '% of Landing Visits', '% of Previous Step', 'Drop-off Volume'];
   funnelHeaders.forEach((h, idx) => {
     const colLetter = String.fromCharCode(66 + idx);
     const cell = wsSummary.getCell(`${colLetter}${funnelStartRow + 1}`);
     cell.value = h;
-    cell.font = HEADER_FONT;
-    cell.fill = ACCENT_FILL;
+    cell.font = FONTS.HEADER_WHITE;
+    cell.fill = COLORS.ACCENT_FILL;
     cell.border = THIN_BORDER;
     cell.alignment = { horizontal: idx >= 2 ? 'right' : 'left' };
   });
 
   const funnelSteps = [
     ['Stage 1', 'Landing Page Visits (Ad Traffic)', totalVisits, 1.0, 1.0, 0],
-    [
-      'Stage 2',
-      'Confirm / Action Page Rendered',
-      confirmViews,
-      confirmViews / totalVisits,
-      confirmViews / totalVisits,
-      totalVisits - confirmViews,
-    ],
-    [
-      'Stage 3',
-      'Subscribe Button Click (Unique Users)',
-      uniqueSubClicks,
-      uniqueSubClicks / totalVisits,
-      uniqueSubClicks / confirmViews,
-      confirmViews - uniqueSubClicks,
-    ],
-    [
-      'Stage 4',
-      'OTP Verification Completed',
-      otpVerified,
-      otpVerified / totalVisits,
-      otpVerified / uniqueSubClicks,
-      uniqueSubClicks - otpVerified,
-    ],
-    [
-      'Stage 5',
-      'Successful Subscriptions (Conversions)',
-      subUsers,
-      subUsers / totalVisits,
-      subUsers / otpVerified,
-      otpVerified - subUsers,
-    ],
+    ['Stage 2', 'Confirm / Action Page Rendered', confirmViews, confirmViews / (totalVisits || 1), confirmViews / (totalVisits || 1), totalVisits - confirmViews],
+    ['Stage 3', 'Subscribe Button Click (Unique Users)', uniqueSubClicks, uniqueSubClicks / (totalVisits || 1), uniqueSubClicks / (confirmViews || 1), confirmViews - uniqueSubClicks],
+    ['Stage 4', 'OTP Verification Completed', otpVerified, otpVerified / (totalVisits || 1), otpVerified / (uniqueSubClicks || 1), uniqueSubClicks - otpVerified],
+    ['Stage 5', 'Successful Subscriptions (Conversions)', subUsers, subUsers / (totalVisits || 1), subUsers / (otpVerified || 1), otpVerified - subUsers],
   ];
 
   funnelSteps.forEach((fs, i) => {
     const rIdx = funnelStartRow + 2 + i;
-    wsSummary.getCell(`B${rIdx}`).value = fs[0];
-    wsSummary.getCell(`B${rIdx}`).font = { bold: true };
-    wsSummary.getCell(`B${rIdx}`).border = THIN_BORDER;
+    const b = wsSummary.getCell(`B${rIdx}`);
+    b.value = fs[0];
+    b.font = FONTS.BOLD;
+    b.border = THIN_BORDER;
 
-    wsSummary.getCell(`C${rIdx}`).value = fs[1];
-    wsSummary.getCell(`C${rIdx}`).border = THIN_BORDER;
+    const c = wsSummary.getCell(`C${rIdx}`);
+    c.value = fs[1];
+    c.border = THIN_BORDER;
 
-    const vCell = wsSummary.getCell(`D${rIdx}`);
-    vCell.value = fs[2];
-    vCell.numFmt = '#,##0';
-    vCell.border = THIN_BORDER;
-    vCell.alignment = { horizontal: 'right' };
+    const d = wsSummary.getCell(`D${rIdx}`);
+    d.value = fs[2];
+    d.numFmt = '#,##0';
+    d.border = THIN_BORDER;
+    d.alignment = { horizontal: 'right' };
 
-    const p1Cell = wsSummary.getCell(`E${rIdx}`);
-    p1Cell.value = fs[3];
-    p1Cell.numFmt = '0.00%';
-    p1Cell.border = THIN_BORDER;
-    p1Cell.alignment = { horizontal: 'right' };
+    const e = wsSummary.getCell(`E${rIdx}`);
+    e.value = fs[3];
+    e.numFmt = '0.00%';
+    e.border = THIN_BORDER;
+    e.alignment = { horizontal: 'right' };
 
-    const p2Cell = wsSummary.getCell(`F${rIdx}`);
-    p2Cell.value = fs[4];
-    p2Cell.numFmt = '0.00%';
-    p2Cell.border = THIN_BORDER;
-    p2Cell.alignment = { horizontal: 'right' };
+    const f = wsSummary.getCell(`F${rIdx}`);
+    f.value = fs[4];
+    f.numFmt = '0.00%';
+    f.border = THIN_BORDER;
+    f.alignment = { horizontal: 'right' };
 
-    const dCell = wsSummary.getCell(`G${rIdx}`);
-    dCell.value = fs[5];
-    dCell.numFmt = '#,##0';
-    dCell.border = THIN_BORDER;
-    dCell.alignment = { horizontal: 'right' };
+    const g = wsSummary.getCell(`G${rIdx}`);
+    g.value = fs[5];
+    g.numFmt = '#,##0';
+    g.border = THIN_BORDER;
+    g.alignment = { horizontal: 'right' };
   });
 
   wsSummary.getColumn('A').width = 4;
@@ -584,774 +393,348 @@ async function main() {
   wsSummary.getColumn('F').width = 18;
   wsSummary.getColumn('G').width = 40;
 
-  // ==========================================
-  // SHEET 2: OTP Verified & Conversions (PRIMARY NEW SHEET)
-  // ==========================================
-  console.log(
-    'Writing Sheet 2: OTP Verified & Conversions (Comprehensive Details)...',
-  );
-  const wsConvDetails = workbook.addWorksheet('OTP Verified & Conversions', {
-    views: [{ showGridLines: true }],
+  // --------------------------------------------------------------------------
+  // SHEET 2: OTP Verified & Conversions
+  // --------------------------------------------------------------------------
+  console.log('Writing Sheet 2: OTP Verified & Conversions (Comprehensive Details)...');
+  const wsConvDetails = workbook.addWorksheet('OTP Verified & Conversions', { views: [{ showGridLines: true }] });
+
+  addReportHeader(wsConvDetails, {
+    rangeTitle: 'A1:V1',
+    title: 'SEPTEMBER 2026 - CONVERTED & OTP VERIFIED LEADS (BURKINA FASO ORANGE)',
+    rangeSubtitle: 'A2:V2',
+    subtitle: `Total Leads: ${conversionsQuery.rows.length.toLocaleString()} | Includes Captured Phone Numbers, Vendor RCID (Tracking Click ID), Funnel Click ID, Timestamps & Postback Status`,
   });
+  wsConvDetails.getRow(1).height = 36;
+  wsConvDetails.getRow(2).height = 20;
+  wsConvDetails.addRow([]);
 
   const convDetailHeaders = [
-    'Visit ID',
-    'Phone Number (MSISDN)',
-    'Click ID',
-    'Vendor RCID (Original Click ID)',
-    'Vendor Camp ID',
-    'Tracking Camp ID',
-    'Vendor Sub ID / VID',
-    'Vendor Name',
-    'OTP Verified?',
-    'OTP Verification Time (UTC)',
-    'Subscribed?',
-    'Conversion / Sub Time (UTC)',
-    'Visit Time (UTC)',
-    'Visit Status',
-    'Postback Status',
-    'Operator Status',
-    'Postback HTTP Status',
-    'Postback Sent Time (UTC)',
-    'IP Address',
-    'Device / User Agent',
-    'Operator',
-    'Country',
+    '#', 'Visit ID', 'Captured Mobile Number', 'Vendor RCID (Original Click ID)', 'Unique Funnel Click ID',
+    'Vendor ID', 'Vendor Name', 'Vendor Camp ID', 'Tracking Camp ID', 'Vendor SubID', 'OTP Verified?',
+    'Is Conversion?', 'Visit Time (UTC)', 'Visit Status', 'Postback Status', 'Operator Status',
+    'Postback HTTP Status', 'Postback Sent Time', 'IP Address', 'User Agent / Device', 'Operator', 'Country',
   ];
+  addTableHeader(wsConvDetails, convDetailHeaders, { fill: COLORS.HEADER_FILL });
 
-  formatHeader(wsConvDetails.getRow(2), convDetailHeaders);
-
-  let curConvRow = 3;
   conversionsQuery.rows.forEach((r, idx) => {
-    const row = wsConvDetails.getRow(curConvRow);
+    const row = wsConvDetails.addRow([
+      idx + 1,
+      r.visit_id,
+      r.phone_number || '',
+      r.rcid || '',
+      r.click_id,
+      r.vendor_id || '',
+      vendorMap[r.vendor_id] || 'Unknown',
+      r.vendor_campid || '',
+      r.tracking_campid || '',
+      r.vendor_subid || '',
+      r.is_otp_verified,
+      r.is_conversion,
+      r.visit_time_utc,
+      r.visit_status,
+      r.postback_status || 'not_sent',
+      r.operator_status || '',
+      r.postback_http_status || '',
+      r.postback_sent_time_utc || '',
+      r.ip_address,
+      r.user_agent,
+      r.operator,
+      r.country,
+    ]);
     row.height = 20;
 
-    row.getCell(1).value = Number(r.visit_id);
-    row.getCell(1).alignment = { horizontal: 'center' };
+    const isConv = r.is_conversion === 'Yes';
+    const isOtp = r.is_otp_verified === 'Yes';
 
-    // Phone Number (MSISDN)
-    row.getCell(2).value = r.phone_number || 'N/A';
-    row.getCell(2).font = { bold: true, size: 11, color: { argb: '0369A1' } };
-    row.getCell(2).alignment = { horizontal: 'center' };
-
-    // Click ID
-    row.getCell(3).value = r.click_id;
-    row.getCell(3).font = { name: 'Consolas', size: 10 };
-
-    // RCID
-    row.getCell(4).value = r.rcid;
-    row.getCell(4).font = {
-      name: 'Consolas',
-      size: 9,
-      color: { argb: '475569' },
-    };
-
-    // Vendor Camp ID
-    row.getCell(5).value = r.vendor_campid || '';
-    row.getCell(5).alignment = { horizontal: 'center' };
-
-    // Tracking Camp ID
-    row.getCell(6).value = r.tracking_campid || 'BF-OR-17';
-    row.getCell(6).alignment = { horizontal: 'center' };
-
-    // Vendor Sub ID
-    row.getCell(7).value = r.vendor_subid || '';
-    row.getCell(7).alignment = { horizontal: 'center' };
-
-    // Vendor Name
-    row.getCell(8).value = vendorMap[r.vendor_id] || 'Track My Ads';
-
-    // OTP Verified?
-    row.getCell(9).value = r.is_otp_verified;
-    row.getCell(9).alignment = { horizontal: 'center' };
-    if (r.is_otp_verified === 'Yes') {
-      row.getCell(9).font = { bold: true, color: { argb: '166534' } };
-    }
-
-    // OTP Time
-    row.getCell(10).value = r.otp_verified_time_utc || '';
-    row.getCell(10).alignment = { horizontal: 'center' };
-
-    // Subscribed?
-    row.getCell(11).value = r.is_conversion;
-    row.getCell(11).alignment = { horizontal: 'center' };
-    if (r.is_conversion === 'Yes') {
-      row.getCell(11).font = { bold: true, color: { argb: '15803D' } };
-      row.getCell(11).fill = {
-        type: 'pattern',
-        pattern: 'solid',
-        fgColor: { argb: 'DCFCE7' },
-      };
-    }
-
-    // Conversion Time
-    row.getCell(12).value = r.conversion_time_utc || '';
-    row.getCell(12).alignment = { horizontal: 'center' };
-
-    // Visit Time
-    row.getCell(13).value = r.visit_time_utc;
-    row.getCell(13).alignment = { horizontal: 'center' };
-
-    // Visit Status
-    row.getCell(14).value = r.visit_status;
-    row.getCell(14).alignment = { horizontal: 'center' };
-
-    // Postback Status
-    row.getCell(15).value = r.postback_status || 'not_sent';
-    row.getCell(15).alignment = { horizontal: 'center' };
-    if (r.postback_status === 'sent') {
-      row.getCell(15).font = { bold: true, color: { argb: '15803D' } };
-    }
-
-    // Operator Status
-    row.getCell(16).value = r.operator_status || '';
-    row.getCell(16).alignment = { horizontal: 'center' };
-
-    // Postback HTTP Status
-    row.getCell(17).value = r.postback_http_status || '';
-    row.getCell(17).alignment = { horizontal: 'center' };
-
-    // Postback Sent Time
-    row.getCell(18).value = r.postback_sent_time_utc || '';
-    row.getCell(18).alignment = { horizontal: 'center' };
-
-    // IP Address
-    row.getCell(19).value = r.ip_address;
-    row.getCell(19).font = { name: 'Consolas', size: 9 };
-
-    // User Agent / Device
-    row.getCell(20).value = r.user_agent;
-    row.getCell(20).font = {
-      name: 'Calibri',
-      size: 9,
-      color: { argb: '475569' },
-    };
-
-    // Operator & Country
-    row.getCell(21).value = r.operator;
-    row.getCell(21).alignment = { horizontal: 'center' };
-    row.getCell(22).value = r.country;
-    row.getCell(22).alignment = { horizontal: 'center' };
-
-    for (let c = 1; c <= convDetailHeaders.length; c++) {
-      const cell = row.getCell(c);
-      cell.border = THIN_BORDER;
-      if (idx % 2 === 1 && r.is_conversion !== 'Yes') {
-        cell.fill = {
-          type: 'pattern',
-          pattern: 'solid',
-          fgColor: { argb: 'F8FAFC' },
-        };
-      }
-    }
-
-    curConvRow++;
+    formatDataRow(row, {
+      isZebra: idx % 2 === 1,
+      alignments: {
+        1: 'center', 2: 'center', 3: 'center', 6: 'center', 8: 'center', 9: 'center',
+        11: 'center', 12: 'center', 13: 'center', 14: 'center', 15: 'center', 16: 'center',
+        17: 'center', 18: 'center', 21: 'center', 22: 'center',
+      },
+      fonts: {
+        3: FONTS.BOLD,
+        4: FONTS.CODE,
+        5: FONTS.CODE,
+        11: isOtp ? FONTS.SUCCESS_BOLD : FONTS.REGULAR,
+        12: isConv ? FONTS.SUCCESS_BOLD : FONTS.REGULAR,
+        15: r.postback_status === 'sent' ? FONTS.SUCCESS_BOLD : FONTS.REGULAR,
+        19: FONTS.CODE,
+        20: FONTS.MUTED,
+      },
+      fills: isConv ? { 3: COLORS.SUCCESS_BG, 12: COLORS.SUCCESS_BG } : isOtp ? { 3: COLORS.WARNING_BG, 11: COLORS.WARNING_BG } : {},
+    });
   });
 
-  // Totals Row for Converted/OTP Verified
-  const convTotalRow = wsConvDetails.getRow(curConvRow);
-  convTotalRow.height = 24;
-  convTotalRow.getCell(1).value = 'TOTAL LEADS';
-  convTotalRow.getCell(1).font = { bold: true };
-  convTotalRow.getCell(2).value = `${curConvRow - 3} records`;
-  convTotalRow.getCell(2).font = {
-    bold: true,
-    size: 11,
-    color: { argb: '0369A1' },
-  };
-
-  for (let c = 1; c <= convDetailHeaders.length; c++) {
-    const cell = convTotalRow.getCell(c);
-    cell.fill = TOTAL_ROW_FILL;
-    cell.border = {
-      top: { style: 'medium', color: { argb: '64748B' } },
-      bottom: { style: 'double', color: { argb: '64748B' } },
-      left: { style: 'thin', color: { argb: 'CBD5E1' } },
-      right: { style: 'thin', color: { argb: 'CBD5E1' } },
-    };
-  }
-
-  wsConvDetails.columns = [
-    { width: 14 }, // Visit ID
-    { width: 25 }, // Phone Number
-    { width: 30 }, // Click ID
-    { width: 36 }, // RCID
-    { width: 18 }, // Vendor Camp ID
-    { width: 18 }, // Tracking Camp ID
-    { width: 18 }, // Vendor Sub ID
-    { width: 20 }, // Vendor Name
-    { width: 15 }, // OTP Verified?
-    { width: 24 }, // OTP Time
-    { width: 15 }, // Subscribed?
-    { width: 24 }, // Conversion Time
-    { width: 22 }, // Visit Time
-    { width: 18 }, // Visit Status
-    { width: 18 }, // Postback Status
-    { width: 18 }, // Operator Status
-    { width: 18 }, // HTTP Status
-    { width: 24 }, // Postback Sent Time
-    { width: 18 }, // IP Address
-    { width: 45 }, // User Agent
-    { width: 14 }, // Operator
-    { width: 16 }, // Country
-  ];
-
-  // ==========================================
-  // SHEET 3: September Daily Breakdown
-  // ==========================================
-  console.log('Writing Sheet 3: September Daily Breakdown...');
-  const wsDaily = workbook.addWorksheet('Daily Breakdown', {
-    views: [{ showGridLines: true }],
+  const convColWidths = [6, 12, 22, 38, 30, 10, 24, 16, 16, 14, 14, 14, 20, 16, 16, 16, 18, 20, 18, 40, 12, 14];
+  convColWidths.forEach((w, i) => {
+    wsConvDetails.getColumn(i + 1).width = w;
   });
+
+  // --------------------------------------------------------------------------
+  // SHEET 3: Daily Breakdown
+  // --------------------------------------------------------------------------
+  console.log('Writing Sheet 3: Daily Breakdown (September)...');
+  const wsDaily = workbook.addWorksheet('Daily Breakdown', { views: [{ showGridLines: true }] });
+
+  addReportHeader(wsDaily, {
+    rangeTitle: 'A1:N1',
+    title: 'SEPTEMBER 2026 - DAILY PERFORMANCE BREAKDOWN (BURKINA FASO ORANGE)',
+    rangeSubtitle: 'A2:N2',
+    subtitle: 'Daily Funnel Progress from Landing Page Visits to Subscribed Conversions',
+  });
+  wsDaily.getRow(1).height = 36;
+  wsDaily.getRow(2).height = 20;
+  wsDaily.addRow([]);
 
   const dailyHeaders = [
-    'Date (UTC)',
-    'Landing Page Visits',
-    'Unique Visitors (IP)',
-    'Unique Click IDs',
-    'Captured Phone Numbers',
-    'Confirm Views',
-    'Total Subscribe Clicks',
-    'Unique Subscribe Clickers',
-    'Subscribe CTR (%)',
-    'OTP Verified',
-    'Subscribed Users',
-    'Conversion Rate (%)',
+    'Date (UTC)', 'Total Visits', 'Unique IPs', 'Unique Clicks', 'Phones Captured', 'Unique Phones',
+    'Confirm Views', 'Total Subscribe Clicks', 'Unique Users Sub Click', 'OTP Verified', 'Subscribed Users',
+    'Click -> Sub Click %', 'Sub Click -> Sub %', 'Overall CR %',
   ];
+  addTableHeader(wsDaily, dailyHeaders, { fill: COLORS.HEADER_FILL });
 
-  formatHeader(wsDaily.getRow(2), dailyHeaders);
+  let sumVisits = 0, sumIps = 0, sumClicks = 0, sumPhones = 0, sumUniquePhones = 0;
+  let sumConfirm = 0, sumSubClicks = 0, sumUniqueSubClicks = 0, sumOtp = 0, sumSub = 0;
 
-  let currentDailyRow = 3;
   dailyQuery.rows.forEach((r, idx) => {
-    const row = wsDaily.getRow(currentDailyRow);
-    row.height = 20;
-
     const visits = Number(r.total_visits);
-    const uips = Number(r.unique_ips);
-    const uclicks = Number(r.unique_clicks);
+    const ips = Number(r.unique_ips);
+    const clicks = Number(r.unique_clicks);
     const phones = Number(r.visits_with_phone);
-    const cviews = Number(r.confirm_views);
+    const uPhones = Number(r.unique_phones);
+    const conf = Number(r.confirm_views);
     const subClicks = Number(r.total_subscribe_clicks);
     const uSubClicks = Number(r.unique_users_subscribe_click);
     const otp = Number(r.otp_verified);
-    const subs = Number(r.subscribed_users);
+    const sub = Number(r.subscribed_users);
 
-    row.getCell(1).value = r.date_utc;
-    row.getCell(1).alignment = { horizontal: 'center' };
+    sumVisits += visits;
+    sumIps += ips;
+    sumClicks += clicks;
+    sumPhones += phones;
+    sumUniquePhones += uPhones;
+    sumConfirm += conf;
+    sumSubClicks += subClicks;
+    sumUniqueSubClicks += uSubClicks;
+    sumOtp += otp;
+    sumSub += sub;
 
-    row.getCell(2).value = visits;
-    row.getCell(2).numFmt = '#,##0';
+    const row = wsDaily.addRow([
+      r.date_utc, visits, ips, clicks, phones, uPhones, conf, subClicks, uSubClicks, otp, sub,
+      visits > 0 ? subClicks / visits : 0,
+      subClicks > 0 ? sub / subClicks : 0,
+      visits > 0 ? sub / visits : 0,
+    ]);
+    row.height = 20;
 
-    row.getCell(3).value = uips;
-    row.getCell(3).numFmt = '#,##0';
-
-    row.getCell(4).value = uclicks;
-    row.getCell(4).numFmt = '#,##0';
-
-    row.getCell(5).value = phones;
-    row.getCell(5).numFmt = '#,##0';
-
-    row.getCell(6).value = cviews;
-    row.getCell(6).numFmt = '#,##0';
-
-    row.getCell(7).value = subClicks;
-    row.getCell(7).numFmt = '#,##0';
-
-    row.getCell(8).value = uSubClicks;
-    row.getCell(8).numFmt = '#,##0';
-
-    row.getCell(9).value = visits > 0 ? subClicks / visits : 0;
-    row.getCell(9).numFmt = '0.00%';
-
-    row.getCell(10).value = otp;
-    row.getCell(10).numFmt = '#,##0';
-
-    row.getCell(11).value = subs;
-    row.getCell(11).numFmt = '#,##0';
-
-    row.getCell(12).value = visits > 0 ? subs / visits : 0;
     row.getCell(12).numFmt = '0.00%';
+    row.getCell(13).numFmt = '0.00%';
+    row.getCell(14).numFmt = '0.00%';
 
-    for (let c = 1; c <= dailyHeaders.length; c++) {
-      const cell = row.getCell(c);
-      cell.border = THIN_BORDER;
-      if (idx % 2 === 1) {
-        cell.fill = {
-          type: 'pattern',
-          pattern: 'solid',
-          fgColor: { argb: 'F8FAFC' },
-        };
-      }
-    }
-    currentDailyRow++;
+    formatDataRow(row, {
+      isZebra: idx % 2 === 1,
+      alignments: {
+        1: 'center', 2: 'right', 3: 'right', 4: 'right', 5: 'right', 6: 'right',
+        7: 'right', 8: 'right', 9: 'right', 10: 'right', 11: 'right', 12: 'right', 13: 'right', 14: 'right',
+      },
+      fonts: { 1: FONTS.BOLD, 11: sub > 0 ? FONTS.SUCCESS_BOLD : FONTS.REGULAR },
+    });
   });
 
-  // Daily Totals Row
-  const dTotalRow = wsDaily.getRow(currentDailyRow);
-  dTotalRow.height = 24;
-  dTotalRow.getCell(1).value = 'SEPTEMBER TOTAL';
-  dTotalRow.getCell(1).font = { bold: true };
-  dTotalRow.getCell(1).alignment = { horizontal: 'center' };
-
-  dTotalRow.getCell(2).value = { formula: `SUM(B3:B${currentDailyRow - 1})` };
-  dTotalRow.getCell(2).numFmt = '#,##0';
-
-  dTotalRow.getCell(3).value = uniqueIps;
-  dTotalRow.getCell(3).numFmt = '#,##0';
-
-  dTotalRow.getCell(4).value = { formula: `SUM(D3:D${currentDailyRow - 1})` };
-  dTotalRow.getCell(4).numFmt = '#,##0';
-
-  dTotalRow.getCell(5).value = { formula: `SUM(E3:E${currentDailyRow - 1})` };
-  dTotalRow.getCell(5).numFmt = '#,##0';
-
-  dTotalRow.getCell(6).value = { formula: `SUM(F3:F${currentDailyRow - 1})` };
-  dTotalRow.getCell(6).numFmt = '#,##0';
-
-  dTotalRow.getCell(7).value = { formula: `SUM(G3:G${currentDailyRow - 1})` };
-  dTotalRow.getCell(7).numFmt = '#,##0';
-
-  dTotalRow.getCell(8).value = { formula: `SUM(H3:H${currentDailyRow - 1})` };
-  dTotalRow.getCell(8).numFmt = '#,##0';
-
-  dTotalRow.getCell(9).value = {
-    formula: `G${currentDailyRow}/B${currentDailyRow}`,
-  };
-  dTotalRow.getCell(9).numFmt = '0.00%';
-
-  dTotalRow.getCell(10).value = { formula: `SUM(J3:J${currentDailyRow - 1})` };
-  dTotalRow.getCell(10).numFmt = '#,##0';
-
-  dTotalRow.getCell(11).value = { formula: `SUM(K3:K${currentDailyRow - 1})` };
-  dTotalRow.getCell(11).numFmt = '#,##0';
-
-  dTotalRow.getCell(12).value = {
-    formula: `K${currentDailyRow}/B${currentDailyRow}`,
-  };
-  dTotalRow.getCell(12).numFmt = '0.00%';
-
-  for (let c = 1; c <= dailyHeaders.length; c++) {
-    const cell = dTotalRow.getCell(c);
-    cell.font = { bold: true, color: { argb: '0F172A' } };
-    cell.fill = TOTAL_ROW_FILL;
-    cell.border = {
-      top: { style: 'medium', color: { argb: '64748B' } },
-      bottom: { style: 'double', color: { argb: '64748B' } },
-      left: { style: 'thin', color: { argb: 'CBD5E1' } },
-      right: { style: 'thin', color: { argb: 'CBD5E1' } },
-    };
-  }
-
-  wsDaily.columns = [
-    { width: 14 },
-    { width: 20 },
-    { width: 22 },
-    { width: 18 },
-    { width: 24 },
-    { width: 16 },
-    { width: 22 },
-    { width: 25 },
-    { width: 18 },
-    { width: 16 },
-    { width: 18 },
-    { width: 20 },
-  ];
-
-  // ==========================================
-  // SHEET 4: September Subscribe Clicks Data (With Phone & Click ID)
-  // ==========================================
-  console.log('Writing Sheet 4: September Subscribe Clicks Details...');
-  const wsSubClicks = workbook.addWorksheet('Subscribe Clicks Data', {
-    views: [{ showGridLines: true }],
+  const dailyTotalRow = wsDaily.addRow([
+    'TOTAL (SEPTEMBER)', sumVisits, sumIps, sumClicks, sumPhones, sumUniquePhones,
+    sumConfirm, sumSubClicks, sumUniqueSubClicks, sumOtp, sumSub,
+    sumVisits > 0 ? sumSubClicks / sumVisits : 0,
+    sumSubClicks > 0 ? sumSub / sumSubClicks : 0,
+    sumVisits > 0 ? sumSub / sumVisits : 0,
+  ]);
+  dailyTotalRow.height = 24;
+  dailyTotalRow.eachCell((cell, col) => {
+    cell.font = FONTS.BOLD;
+    cell.fill = COLORS.NOTE_BG;
+    cell.border = THIN_BORDER;
+    if (col >= 12) cell.numFmt = '0.00%';
+    cell.alignment = { horizontal: col === 1 ? 'center' : 'right', vertical: 'middle' };
   });
 
-  const subClicksHeaders = [
-    'Visit ID',
-    'Click Timestamp (UTC)',
-    'Phone Number (MSISDN)',
-    'Click ID',
-    'Vendor RCID (Original Click ID)',
-    'Vendor Name',
-    'IP Address',
-    'Page Type',
-    'Visit Status',
-    'Times Clicked',
-    'OTP Verified?',
-    'Subscribed?',
+  const dailyColWidths = [14, 14, 14, 14, 16, 16, 16, 20, 22, 14, 16, 20, 20, 16];
+  dailyColWidths.forEach((w, i) => {
+    wsDaily.getColumn(i + 1).width = w;
+  });
+
+  // --------------------------------------------------------------------------
+  // SHEET 4: Subscribe Clicks Data
+  // --------------------------------------------------------------------------
+  console.log('Writing Sheet 4: Subscribe Clicks Data...');
+  const wsSubClicks = workbook.addWorksheet('Subscribe Clicks Data', { views: [{ showGridLines: true }] });
+
+  addReportHeader(wsSubClicks, {
+    rangeTitle: 'A1:L1',
+    title: 'SEPTEMBER 2026 - DETAILED SUBSCRIBE BUTTON CLICKS LOG',
+    rangeSubtitle: 'A2:L2',
+    subtitle: `Total Clicks: ${subClicksQuery.rows.length.toLocaleString()} | Log of Visitors Clicking the Subscribe / CTA Button`,
+  });
+  wsSubClicks.getRow(1).height = 36;
+  wsSubClicks.getRow(2).height = 20;
+  wsSubClicks.addRow([]);
+
+  const subClickHeaders = [
+    '#', 'Visit ID', 'First Click Time (UTC)', 'Phone Number', 'Click ID', 'RCID',
+    'Vendor ID', 'Vendor Name', 'IP Address', 'Page Type', 'Subscribe Click Count', 'Subscribed?',
   ];
+  addTableHeader(wsSubClicks, subClickHeaders, { fill: COLORS.HEADER_FILL });
 
-  formatHeader(wsSubClicks.getRow(2), subClicksHeaders);
-
-  let curSubRow = 3;
   subClicksQuery.rows.forEach((r, idx) => {
-    const row = wsSubClicks.getRow(curSubRow);
-    row.height = 19;
+    const isSub = r.is_subscribed === 'Yes';
+    const row = wsSubClicks.addRow([
+      idx + 1, r.visit_id, r.first_click_time_utc, r.phone || '', r.click_id, r.rcid || '',
+      r.vendor_id || '', vendorMap[r.vendor_id] || 'Unknown', r.ip_address, r.page_type || 'HOME',
+      Number(r.subscribe_click_count), r.is_subscribed,
+    ]);
+    row.height = 20;
 
-    row.getCell(1).value = Number(r.visit_id);
-    row.getCell(1).alignment = { horizontal: 'center' };
-
-    row.getCell(2).value = r.first_click_time_utc;
-    row.getCell(2).alignment = { horizontal: 'center' };
-
-    row.getCell(3).value = r.phone || 'Not Captured';
-    if (r.phone) {
-      row.getCell(3).font = { bold: true, color: { argb: '0369A1' } };
-    } else {
-      row.getCell(3).font = { italic: true, color: { argb: '94A3B8' } };
-    }
-
-    row.getCell(4).value = r.click_id;
-    row.getCell(4).font = { name: 'Consolas', size: 10 };
-
-    row.getCell(5).value = r.rcid;
-    row.getCell(5).font = {
-      name: 'Consolas',
-      size: 9,
-      color: { argb: '475569' },
-    };
-
-    row.getCell(6).value = vendorMap[r.vendor_id] || 'Direct/Unknown';
-
-    row.getCell(7).value = r.ip_address;
-    row.getCell(7).font = { name: 'Consolas', size: 10 };
-
-    row.getCell(8).value = r.page_type || 'CONFIRM';
-    row.getCell(8).alignment = { horizontal: 'center' };
-
-    row.getCell(9).value = r.visit_status;
-    row.getCell(9).alignment = { horizontal: 'center' };
-
-    row.getCell(10).value = Number(r.subscribe_click_count);
-    row.getCell(10).alignment = { horizontal: 'center' };
-
-    row.getCell(11).value = r.otp_verified;
-    row.getCell(11).alignment = { horizontal: 'center' };
-    if (r.otp_verified === 'Yes') {
-      row.getCell(11).font = { bold: true, color: { argb: '166534' } };
-    }
-
-    row.getCell(12).value = r.is_subscribed;
-    row.getCell(12).alignment = { horizontal: 'center' };
-    if (r.is_subscribed === 'Yes') {
-      row.getCell(12).font = { bold: true, color: { argb: '15803D' } };
-      row.getCell(12).fill = {
-        type: 'pattern',
-        pattern: 'solid',
-        fgColor: { argb: 'DCFCE7' },
-      };
-    }
-
-    for (let c = 1; c <= subClicksHeaders.length; c++) {
-      const cell = row.getCell(c);
-      cell.border = THIN_BORDER;
-      if (idx % 2 === 1 && r.is_subscribed !== 'Yes') {
-        cell.fill = {
-          type: 'pattern',
-          pattern: 'solid',
-          fgColor: { argb: 'F8FAFC' },
-        };
-      }
-    }
-
-    curSubRow++;
+    formatDataRow(row, {
+      isZebra: idx % 2 === 1,
+      alignments: { 1: 'center', 2: 'center', 3: 'center', 7: 'center', 10: 'center', 11: 'right', 12: 'center' },
+      fonts: {
+        4: r.phone ? FONTS.BOLD : FONTS.REGULAR,
+        5: FONTS.CODE,
+        6: FONTS.CODE,
+        9: FONTS.CODE,
+        12: isSub ? FONTS.SUCCESS_BOLD : FONTS.REGULAR,
+      },
+      fills: isSub ? { 4: COLORS.SUCCESS_BG, 12: COLORS.SUCCESS_BG } : {},
+    });
   });
 
-  wsSubClicks.columns = [
-    { width: 14 },
-    { width: 22 },
-    { width: 24 },
-    { width: 30 },
-    { width: 36 },
-    { width: 20 },
-    { width: 18 },
-    { width: 14 },
-    { width: 18 },
-    { width: 15 },
-    { width: 15 },
-    { width: 15 },
-  ];
-
-  // ==========================================
-  // SHEET 5: September All Landing Page Visits (36,959 rows)
-  // ==========================================
-  console.log('Writing Sheet 5: September All Landing Page Visits Log...');
-  const wsAllVisits = workbook.addWorksheet('All Landing Visits Log', {
-    views: [{ showGridLines: true }],
+  const subClickWidths = [6, 12, 20, 20, 30, 36, 10, 24, 18, 14, 20, 14];
+  subClickWidths.forEach((w, i) => {
+    wsSubClicks.getColumn(i + 1).width = w;
   });
 
-  const allVisitsHeaders = [
-    'Visit ID',
-    'Visit Timestamp (UTC)',
-    'Phone Number (MSISDN)',
-    'Click ID',
-    'Vendor RCID',
-    'Vendor Name',
-    'IP Address',
-    'Page Type',
-    'Visit Status',
-    'Clicked Subscribe?',
-    'Subscribe Clicks',
-    'Subscribed?',
+  // --------------------------------------------------------------------------
+  // SHEET 5: All Landing Visits Log
+  // --------------------------------------------------------------------------
+  console.log('Writing Sheet 5: All Landing Page Visits Log...');
+  const wsAllVisits = workbook.addWorksheet('All Landing Visits Log', { views: [{ showGridLines: true }] });
+
+  addReportHeader(wsAllVisits, {
+    rangeTitle: 'A1:K1',
+    title: 'SEPTEMBER 2026 - COMPLETE LANDING PAGE VISITS LOG',
+    rangeSubtitle: 'A2:K2',
+    subtitle: `Total Visits: ${allVisitsQuery.rows.length.toLocaleString()} | Telemetry Records for September 2026`,
+  });
+  wsAllVisits.getRow(1).height = 36;
+  wsAllVisits.getRow(2).height = 20;
+  wsAllVisits.addRow([]);
+
+  const allVisitHeaders = [
+    '#', 'Visit ID', 'Visit Time (UTC)', 'Phone Number', 'Click ID', 'RCID',
+    'Vendor ID', 'Vendor Name', 'IP Address', 'Clicked Subscribe?', 'Subscribe Clicks Count',
   ];
+  addTableHeader(wsAllVisits, allVisitHeaders, { fill: COLORS.HEADER_FILL });
 
-  formatHeader(wsAllVisits.getRow(2), allVisitsHeaders);
-
-  let curVisitRow = 3;
   allVisitsQuery.rows.forEach((r, idx) => {
-    const row = wsAllVisits.getRow(curVisitRow);
-    row.height = 18;
+    const row = wsAllVisits.addRow([
+      idx + 1, r.visit_id, r.visit_time_utc, r.phone || '', r.click_id, r.rcid || '',
+      r.vendor_id || '', vendorMap[r.vendor_id] || 'Unknown', r.ip_address,
+      r.clicked_subscribe, Number(r.subscribe_clicks),
+    ]);
+    row.height = 20;
 
-    row.getCell(1).value = Number(r.visit_id);
-    row.getCell(1).alignment = { horizontal: 'center' };
-
-    row.getCell(2).value = r.visit_time_utc;
-    row.getCell(2).alignment = { horizontal: 'center' };
-
-    row.getCell(3).value = r.phone || '';
-    if (r.phone) {
-      row.getCell(3).font = { bold: true, color: { argb: '0369A1' } };
-    }
-
-    row.getCell(4).value = r.click_id;
-    row.getCell(4).font = { name: 'Consolas', size: 9 };
-
-    row.getCell(5).value = r.rcid;
-    row.getCell(5).font = {
-      name: 'Consolas',
-      size: 9,
-      color: { argb: '64748B' },
-    };
-
-    row.getCell(6).value = vendorMap[r.vendor_id] || 'Direct/Unknown';
-
-    row.getCell(7).value = r.ip_address;
-    row.getCell(7).font = { name: 'Consolas', size: 9 };
-
-    row.getCell(8).value = r.page_type || 'HOME';
-    row.getCell(8).alignment = { horizontal: 'center' };
-
-    row.getCell(9).value = r.visit_status;
-    row.getCell(9).alignment = { horizontal: 'center' };
-
-    row.getCell(10).value = r.clicked_subscribe;
-    row.getCell(10).alignment = { horizontal: 'center' };
-    if (r.clicked_subscribe === 'Yes') {
-      row.getCell(10).font = { bold: true, color: { argb: '0284C7' } };
-    }
-
-    row.getCell(11).value = Number(r.subscribe_clicks);
-    row.getCell(11).alignment = { horizontal: 'center' };
-
-    row.getCell(12).value = r.is_subscribed;
-    row.getCell(12).alignment = { horizontal: 'center' };
-    if (r.is_subscribed === 'Yes') {
-      row.getCell(12).font = { bold: true, color: { argb: '15803D' } };
-      row.getCell(12).fill = {
-        type: 'pattern',
-        pattern: 'solid',
-        fgColor: { argb: 'DCFCE7' },
-      };
-    }
-
-    if (idx % 2 === 1 && r.is_subscribed !== 'Yes') {
-      for (let c = 1; c <= allVisitsHeaders.length; c++) {
-        row.getCell(c).fill = {
-          type: 'pattern',
-          pattern: 'solid',
-          fgColor: { argb: 'F8FAFC' },
-        };
-      }
-    }
-
-    curVisitRow++;
+    formatDataRow(row, {
+      isZebra: idx % 2 === 1,
+      alignments: { 1: 'center', 2: 'center', 3: 'center', 7: 'center', 10: 'center', 11: 'right' },
+      fonts: {
+        4: r.phone ? FONTS.BOLD : FONTS.REGULAR,
+        5: FONTS.CODE,
+        6: FONTS.CODE,
+        9: FONTS.CODE,
+        10: r.clicked_subscribe === 'Yes' ? FONTS.SUCCESS_BOLD : FONTS.REGULAR,
+      },
+    });
   });
 
-  wsAllVisits.columns = [
-    { width: 14 },
-    { width: 22 },
-    { width: 24 },
-    { width: 30 },
-    { width: 36 },
-    { width: 20 },
-    { width: 18 },
-    { width: 14 },
-    { width: 18 },
-    { width: 18 },
-    { width: 16 },
-    { width: 15 },
-  ];
-
-  // ==========================================
-  // SHEET 6: September Vendor Breakdown
-  // ==========================================
-  console.log('Writing Sheet 6: September Vendor Breakdown...');
-  const wsVendor = workbook.addWorksheet('Vendor & Traffic Source', {
-    views: [{ showGridLines: true }],
+  const allVisitWidths = [6, 12, 20, 20, 30, 36, 10, 24, 18, 18, 22];
+  allVisitWidths.forEach((w, i) => {
+    wsAllVisits.getColumn(i + 1).width = w;
   });
+
+  // --------------------------------------------------------------------------
+  // SHEET 6: Vendor & Traffic Source Breakdown
+  // --------------------------------------------------------------------------
+  console.log('Writing Sheet 6: Vendor Breakdown...');
+  const wsVendor = workbook.addWorksheet('Vendor & Traffic Source', { views: [{ showGridLines: true }] });
+
+  addReportHeader(wsVendor, {
+    rangeTitle: 'A1:H1',
+    title: 'SEPTEMBER 2026 - VENDOR & TRAFFIC SOURCE BREAKDOWN',
+    rangeSubtitle: 'A2:H2',
+    subtitle: 'Traffic Performance, Subscribe Button Clicks and Conversions Segmented by Vendor Network',
+  });
+  wsVendor.getRow(1).height = 36;
+  wsVendor.getRow(2).height = 20;
+  wsVendor.addRow([]);
 
   const vendorHeaders = [
-    'Vendor ID',
-    'Vendor Name',
-    'Landing Page Visits',
-    'Unique Visitors (IP)',
-    'Captured Phone Numbers',
-    'Total Subscribe Clicks',
-    'Unique Subscribe Clickers',
-    'Subscribe CTR (%)',
-    'Subscribed Users',
-    'Conversion Rate (%)',
+    'Vendor ID', 'Vendor Name', 'Total Visits', 'Unique IPs', 'Phones Captured',
+    'Subscribe Clicks', 'Subscribed Users', 'Conversion Rate %',
   ];
+  addTableHeader(wsVendor, vendorHeaders, { fill: COLORS.HEADER_FILL });
 
-  formatHeader(wsVendor.getRow(2), vendorHeaders);
+  let vSumVisits = 0, vSumIps = 0, vSumPhones = 0, vSumClicks = 0, vSumSub = 0;
 
-  let currentVendorRow = 3;
   vendorBreakdownQuery.rows.forEach((r, idx) => {
-    const row = wsVendor.getRow(currentVendorRow);
-    row.height = 22;
-
     const visits = Number(r.total_visits);
-    const uips = Number(r.unique_ips);
+    const ips = Number(r.unique_ips);
     const phones = Number(r.visits_with_phone);
-    const subClicks = Number(r.total_subscribe_clicks);
-    const uSubClicks = Number(r.unique_users_subscribe_click);
-    const subs = Number(r.subscribed_users);
+    const clicks = Number(r.total_subscribe_clicks);
+    const sub = Number(r.subscribed_users);
 
-    row.getCell(1).value = r.vendor_id || 'N/A';
-    row.getCell(1).alignment = { horizontal: 'center' };
+    vSumVisits += visits;
+    vSumIps += ips;
+    vSumPhones += phones;
+    vSumClicks += clicks;
+    vSumSub += sub;
 
-    row.getCell(2).value = vendorMap[r.vendor_id] || 'Direct / Organic';
-    row.getCell(2).font = { bold: true };
-
-    row.getCell(3).value = visits;
-    row.getCell(3).numFmt = '#,##0';
-
-    row.getCell(4).value = uips;
-    row.getCell(4).numFmt = '#,##0';
-
-    row.getCell(5).value = phones;
-    row.getCell(5).numFmt = '#,##0';
-
-    row.getCell(6).value = subClicks;
-    row.getCell(6).numFmt = '#,##0';
-
-    row.getCell(7).value = uSubClicks;
-    row.getCell(7).numFmt = '#,##0';
-
-    row.getCell(8).value = visits > 0 ? subClicks / visits : 0;
+    const row = wsVendor.addRow([
+      r.vendor_id || 'N/A', vendorMap[r.vendor_id] || 'Direct / Organic',
+      visits, ips, phones, clicks, sub, visits > 0 ? sub / visits : 0,
+    ]);
+    row.height = 20;
     row.getCell(8).numFmt = '0.00%';
 
-    row.getCell(9).value = subs;
-    row.getCell(9).numFmt = '#,##0';
-
-    row.getCell(10).value = visits > 0 ? subs / visits : 0;
-    row.getCell(10).numFmt = '0.00%';
-
-    for (let c = 1; c <= vendorHeaders.length; c++) {
-      const cell = row.getCell(c);
-      cell.border = THIN_BORDER;
-      if (idx % 2 === 1) {
-        cell.fill = {
-          type: 'pattern',
-          pattern: 'solid',
-          fgColor: { argb: 'F8FAFC' },
-        };
-      }
-    }
-    currentVendorRow++;
+    formatDataRow(row, {
+      isZebra: idx % 2 === 1,
+      alignments: { 1: 'center', 2: 'left', 3: 'right', 4: 'right', 5: 'right', 6: 'right', 7: 'right', 8: 'right' },
+      fonts: { 2: FONTS.BOLD, 7: sub > 0 ? FONTS.SUCCESS_BOLD : FONTS.REGULAR },
+    });
   });
 
-  // Vendor Totals
-  const vTotalRow = wsVendor.getRow(currentVendorRow);
-  vTotalRow.height = 24;
-  vTotalRow.getCell(1).value = '-';
-  vTotalRow.getCell(1).alignment = { horizontal: 'center' };
-  vTotalRow.getCell(2).value = 'TOTAL';
-  vTotalRow.getCell(2).font = { bold: true };
+  const vendorTotalRow = wsVendor.addRow([
+    'TOTAL', 'All Vendors Combined', vSumVisits, vSumIps, vSumPhones, vSumClicks, vSumSub,
+    vSumVisits > 0 ? vSumSub / vSumVisits : 0,
+  ]);
+  vendorTotalRow.height = 24;
+  vendorTotalRow.eachCell((cell, col) => {
+    cell.font = FONTS.BOLD;
+    cell.fill = COLORS.NOTE_BG;
+    cell.border = THIN_BORDER;
+    if (col === 8) cell.numFmt = '0.00%';
+    cell.alignment = { horizontal: col <= 2 ? 'center' : 'right', vertical: 'middle' };
+  });
 
-  vTotalRow.getCell(3).value = { formula: `SUM(C3:C${currentVendorRow - 1})` };
-  vTotalRow.getCell(3).numFmt = '#,##0';
+  const vendorWidths = [12, 28, 16, 16, 18, 18, 18, 18];
+  vendorWidths.forEach((w, i) => {
+    wsVendor.getColumn(i + 1).width = w;
+  });
 
-  vTotalRow.getCell(4).value = uniqueIps;
-  vTotalRow.getCell(4).numFmt = '#,##0';
-
-  vTotalRow.getCell(5).value = { formula: `SUM(E3:E${currentVendorRow - 1})` };
-  vTotalRow.getCell(5).numFmt = '#,##0';
-
-  vTotalRow.getCell(6).value = { formula: `SUM(F3:F${currentVendorRow - 1})` };
-  vTotalRow.getCell(6).numFmt = '#,##0';
-
-  vTotalRow.getCell(7).value = { formula: `SUM(G3:G${currentVendorRow - 1})` };
-  vTotalRow.getCell(7).numFmt = '#,##0';
-
-  vTotalRow.getCell(8).value = {
-    formula: `F${currentVendorRow}/C${currentVendorRow}`,
-  };
-  vTotalRow.getCell(8).numFmt = '0.00%';
-
-  vTotalRow.getCell(9).value = { formula: `SUM(I3:I${currentVendorRow - 1})` };
-  vTotalRow.getCell(9).numFmt = '#,##0';
-
-  vTotalRow.getCell(10).value = {
-    formula: `I${currentVendorRow}/C${currentVendorRow}`,
-  };
-  vTotalRow.getCell(10).numFmt = '0.00%';
-
-  for (let c = 1; c <= vendorHeaders.length; c++) {
-    const cell = vTotalRow.getCell(c);
-    cell.font = { bold: true, color: { argb: '0F172A' } };
-    cell.fill = TOTAL_ROW_FILL;
-    cell.border = {
-      top: { style: 'medium', color: { argb: '64748B' } },
-      bottom: { style: 'double', color: { argb: '64748B' } },
-      left: { style: 'thin', color: { argb: 'CBD5E1' } },
-      right: { style: 'thin', color: { argb: 'CBD5E1' } },
-    };
-  }
-
-  wsVendor.columns = [
-    { width: 14 },
-    { width: 22 },
-    { width: 20 },
-    { width: 22 },
-    { width: 25 },
-    { width: 22 },
-    { width: 25 },
-    { width: 18 },
-    { width: 18 },
-    { width: 20 },
-  ];
-
-  // Save Workbook to disk
-  const pathSeptNamed = path.resolve(
-    'd:/dddd/Burkina_Faso_September_Analytics_Report.xlsx',
-  );
-  const pathMainOverwritten = path.resolve(
-    'd:/dddd/Burkina_Faso_Analytics_Report.xlsx',
-  );
-  const pathArtifactSept = path.resolve(
-    'C:/Users/gjais/.gemini/antigravity-ide/brain/9db2e6c0-3779-4972-b535-8c074346209e/Burkina_Faso_September_Analytics_Report.xlsx',
-  );
-
-  console.log(`Writing workbook to ${pathSeptNamed}...`);
-  await workbook.xlsx.writeFile(pathSeptNamed);
-  console.log(`Successfully saved: ${pathSeptNamed}`);
-
-  console.log(
-    `Overwriting main report with September data: ${pathMainOverwritten}...`,
-  );
-  await workbook.xlsx.writeFile(pathMainOverwritten);
-  console.log(`Successfully updated: ${pathMainOverwritten}`);
-
-  try {
-    await workbook.xlsx.writeFile(pathArtifactSept);
-    console.log(`Successfully saved artifact copy: ${pathArtifactSept}`);
-  } catch (e) {
-    console.warn('Artifact write warning:', e.message);
-  }
-
-  console.log(
-    'Finished updating September Excel Report with full OTP Verified & Conversion details!',
-  );
+  const outputPath = path.resolve(__dirname, '../../../Burkina_Faso_Orange_September_2026_Report.xlsx');
+  await workbook.xlsx.writeFile(outputPath);
+  console.log(`Report successfully written to ${outputPath}`);
 }
 
 main().catch(console.error);

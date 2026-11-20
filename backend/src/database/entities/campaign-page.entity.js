@@ -1,42 +1,19 @@
 import { EntitySchema } from 'typeorm';
 
-/**
- * CampaignPage Entity Model
- *
- * Represents a single screen/page within a campaign's conversion funnel
- * (e.g., HOME landing, OTP entry, CONFIRM consent, THANKYOU success, BLOCKED, ERROR),
- * linking to a GrapesJS visual Template.
- *
- * @class CampaignPage
- */
+// Screen/page within a campaign's funnel (HOME, OTP, CONFIRM, etc.)
 export class CampaignPage {}
 
-/**
- * Funnel Page Types supported by the system.
- *
- * @readonly
- * @enum {string}
- */
 export const CampaignPageType = {
-  /** Landing / main offer page */
   HOME: 'HOME',
-  /** Consent / double opt-in confirmation page */
   CONFIRM: 'CONFIRM',
-  /** SMS PIN / OTP entry page */
   OTP: 'OTP',
-  /** Post-subscription success confirmation page */
   THANKYOU: 'THANKYOU',
-  /** Subscription pending / processing screen */
   INPROGRESS: 'INPROGRESS',
-  /** Insufficient telco balance warning screen */
   LOW_BALANCE: 'LOW_BALANCE',
-  /** Fraud / geo-block / IP restriction page */
   BLOCKED: 'BLOCKED',
-  /** General error fallback page */
   ERROR: 'ERROR',
 };
 
-/** @type {string[]} Core required funnel page types */
 export const REQUIRED_CAMPAIGN_PAGE_TYPES = [
   CampaignPageType.HOME,
   CampaignPageType.CONFIRM,
@@ -44,7 +21,6 @@ export const REQUIRED_CAMPAIGN_PAGE_TYPES = [
   CampaignPageType.THANKYOU,
 ];
 
-/** @type {string[]} All valid funnel page types */
 export const ALL_CAMPAIGN_PAGE_TYPES = [
   CampaignPageType.HOME,
   CampaignPageType.CONFIRM,
@@ -56,7 +32,6 @@ export const ALL_CAMPAIGN_PAGE_TYPES = [
   CampaignPageType.ERROR,
 ];
 
-/** @type {Set<string>} Statuses considered un-subscribed or new user */
 export const INACTIVE_OR_NEW_STATUSES = new Set([
   'new',
   'unknown',
@@ -76,65 +51,44 @@ export const INACTIVE_OR_NEW_STATUSES = new Set([
   '',
 ]);
 
-/**
- * Resolves checksub subscriber status into the appropriate funnel page.
- * Returns null if the subscriber is inactive/new (meaning continue standard flow).
- *
- * @param {string} status - Carrier subscriber status (e.g. 'active', 'pending', 'grace')
- * @param {boolean} [isActive=false] - Explicit flag indicating active subscriber
- * @returns {string | null} Funnel page type or null
- */
+// Maps subscriber status to appropriate funnel page (or null for new/inactive)
 export const pageTypeForSubscriptionStatus = (status, isActive = false) => {
-  const s = String(status || '')
-    .trim()
-    .toLowerCase();
+  const s = String(status || '').trim().toLowerCase();
   if (isActive || s === 'active') return CampaignPageType.THANKYOU;
   if (s === 'pending') return CampaignPageType.INPROGRESS;
   if (s === 'grace' || s === 'parking') return CampaignPageType.LOW_BALANCE;
-  if (INACTIVE_OR_NEW_STATUSES.has(s)) {
-    return null;
-  }
+  if (INACTIVE_OR_NEW_STATUSES.has(s)) return null;
   return CampaignPageType.INPROGRESS;
 };
 
-/**
- * TypeORM Schema Definition for CampaignPage
- * Maps to the `campaign_pages` table.
- */
 export const CampaignPageSchema = new EntitySchema({
   name: 'CampaignPage',
   target: CampaignPage,
   tableName: 'campaign_pages',
   columns: {
-    /** @type {number} Primary auto-incrementing identifier */
     id: {
       primary: true,
       type: 'int',
       generated: true,
     },
-    /** @type {number} Foreign key referencing parent `campaigns.id` */
     campaignId: {
       name: 'campaign_id',
-      type: 'int',
+      type: 'int', // FK -> campaigns.id
     },
-    /** @type {string} Type of page: 'HOME' | 'CONFIRM' | 'OTP' | 'THANKYOU' | 'INPROGRESS' | 'LOW_BALANCE' | 'BLOCKED' | 'ERROR' */
     pageType: {
       name: 'page_type',
-      type: 'varchar',
+      type: 'varchar', // 'HOME' | 'CONFIRM' | 'OTP' | 'THANKYOU' | etc.
     },
-    /** @type {number|null} Foreign key referencing visual `templates.id` containing GrapesJS HTML/CSS design */
     templateId: {
       name: 'template_id',
       type: 'int',
-      nullable: true,
+      nullable: true, // FK -> templates.id (GrapesJS HTML/CSS)
     },
-    /** @type {Date} Record creation timestamp */
     createdAt: {
       name: 'created_at',
       type: 'timestamp',
       createDate: true,
     },
-    /** @type {Date} Record last update timestamp */
     updatedAt: {
       name: 'updated_at',
       type: 'timestamp',
@@ -142,7 +96,6 @@ export const CampaignPageSchema = new EntitySchema({
     },
   },
   relations: {
-    /** @type {import('./campaign.entity.js').Campaign} Parent campaign */
     campaign: {
       type: 'many-to-one',
       target: 'Campaign',
@@ -150,7 +103,6 @@ export const CampaignPageSchema = new EntitySchema({
       joinColumn: { name: 'campaign_id' },
       onDelete: 'CASCADE',
     },
-    /** @type {import('./template.entity.js').Template|null} Visual GrapesJS page template design */
     template: {
       type: 'many-to-one',
       target: 'Template',

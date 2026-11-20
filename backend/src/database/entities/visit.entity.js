@@ -1,198 +1,144 @@
 import { EntitySchema } from 'typeorm';
 
-/**
- * Visit Entity Model
- *
- * Domain model representing an end-user session / traffic click through a Campaign funnel.
- * Captures:
- * - Inbound tracking & attribution parameters: vendorId, affiliateId, clickId, rcid, campid, trackingCampid
- * - Subscriber identity: phone/MSISDN (detected via network HE or entered via OTP), IP address, User-Agent
- * - Funnel progression: visitStatus ('VISIT', 'HOME_SHOWN', 'OTP_SHOWN', 'CONFIRM_SHOWN', 'SUBSCRIBED', etc.)
- * - 30-minute post-conversion carrier checksub reconciliation results
- *
- * @class Visit
- */
+// Visit — end-user session / traffic click through a campaign funnel
 export class Visit {}
 
-/**
- * High-level Funnel Progression Status Enum.
- *
- * @readonly
- * @enum {string}
- */
 export const VisitStatus = {
-  /** Initial inbound request received */
-  VISIT: 'VISIT',
-  /** Blocked by geo-IP or DND rules */
-  BLOCKED: 'BLOCKED',
-  /** Subscriber successfully subscribed to service */
-  SUBSCRIBED: 'SUBSCRIBED',
-  /** HOME landing page displayed */
-  HOME_SHOWN: 'HOME_SHOWN',
-  /** OTP entry page displayed */
-  OTP_SHOWN: 'OTP_SHOWN',
-  /** Consent confirmation page displayed */
-  CONFIRM_SHOWN: 'CONFIRM_SHOWN',
-  /** General success terminal state */
-  SUCCESS: 'SUCCESS',
-  /** Terminal error or billing failure */
-  FAILED: 'FAILED',
+  VISIT: 'VISIT',                 // Initial inbound request received
+  BLOCKED: 'BLOCKED',             // Blocked by geo-IP or DND rules
+  SUBSCRIBED: 'SUBSCRIBED',       // Subscriber successfully subscribed
+  HOME_SHOWN: 'HOME_SHOWN',       // HOME landing page displayed
+  OTP_SHOWN: 'OTP_SHOWN',         // OTP entry page displayed
+  CONFIRM_SHOWN: 'CONFIRM_SHOWN', // Consent confirmation page displayed
+  SUCCESS: 'SUCCESS',             // General success terminal state
+  FAILED: 'FAILED',               // Terminal error or billing failure
 };
 
-/**
- * TypeORM Schema Definition for Visit
- * Maps to the `visits` table.
- */
 export const VisitSchema = new EntitySchema({
   name: 'Visit',
   target: Visit,
   tableName: 'visits',
   columns: {
-    /** @type {number} Primary auto-incrementing identifier */
     id: {
       primary: true,
       type: 'int',
       generated: true,
     },
-    /** @type {number|null} Foreign key referencing `campaigns.id` */
     campaignId: {
       name: 'campaign_id',
-      type: 'int',
+      type: 'int', // FK -> campaigns.id
       nullable: true,
     },
-    /** @type {string|null} User phone number / MSISDN (detected via HE or inputted via OTP) */
     phone: {
-      type: 'varchar',
+      type: 'varchar', // MSISDN (detected via HE or inputted via OTP)
       nullable: true,
     },
-    /** @type {string|null} Country detected or targeted at time of visit */
     country: {
       type: 'varchar',
       nullable: true,
     },
-    /** @type {string|null} Carrier operator detected or targeted at time of visit */
     operator: {
       type: 'varchar',
       nullable: true,
     },
-    /** @type {string|null} Client IP address */
     ipAddress: {
       name: 'ip_address',
       type: 'varchar',
       nullable: true,
     },
-    /** @type {string|null} Client browser / device user agent string */
     userAgent: {
       name: 'user_agent',
       type: 'varchar',
       nullable: true,
     },
-    /** @type {string|null} Full inbound landing URL with query string */
     landingUrl: {
       name: 'landing_url',
       type: 'text',
       nullable: true,
     },
-    /** @type {number|null} Foreign key referencing `vendors.id` */
     vendorId: {
       name: 'vendor_id',
-      type: 'int',
+      type: 'int', // FK -> vendors.id
       nullable: true,
     },
-    /** @type {number|null} Optional foreign key referencing `affiliates.id` */
     affiliateId: {
       name: 'affiliate_id',
-      type: 'int',
+      type: 'int', // FK -> affiliates.id
       nullable: true,
     },
-    /** @type {string|null} Unique traffic partner click identifier (?click_id=) */
     clickId: {
       name: 'click_id',
-      type: 'varchar',
+      type: 'varchar', // Partner click ID (?click_id=)
       nullable: true,
     },
-    /** @type {string|null} Affiliate / network original click id (?rcid=) */
     rcid: {
-      type: 'varchar',
+      type: 'varchar', // Affiliate / network click ID (?rcid=)
       nullable: true,
     },
-    /** @type {string|null} Inbound partner campaign identifier (?campid=) */
     campid: {
       type: 'varchar',
-      length: 128,
+      length: 128, // Inbound partner campaign ID (?campid=)
       nullable: true,
     },
-    /** @type {string|null} Internal tracking campaign code (e.g. BF-OBF-11) */
     trackingCampid: {
       name: 'tracking_campid',
       type: 'varchar',
-      length: 128,
+      length: 128, // Internal tracking campaign code (e.g. BF-OBF-11)
       nullable: true,
     },
-    /** @type {string|null} Raw unmapped vendor string from inbound query */
     vidRaw: {
       name: 'vid_raw',
-      type: 'varchar',
+      type: 'varchar', // Raw unmapped vendor string from inbound query
       nullable: true,
     },
-    /** @type {string|null} Raw unmapped affiliate string from inbound query */
     affRaw: {
       name: 'aff_raw',
-      type: 'varchar',
+      type: 'varchar', // Raw unmapped affiliate string from inbound query
       nullable: true,
     },
-    /** @type {string} Current funnel progression state: 'VISIT' | 'HOME_SHOWN' | 'OTP_SHOWN' | 'CONFIRM_SHOWN' | 'SUBSCRIBED' | 'SUCCESS' | 'FAILED' | 'BLOCKED' */
     visitStatus: {
       name: 'visit_status',
       type: 'varchar',
       default: VisitStatus.VISIT,
     },
-    /** @type {string|null} Last rendered page type: 'HOME' | 'OTP' | 'CONFIRM' | 'THANKYOU' */
     pageType: {
       name: 'page_type',
-      type: 'varchar',
+      type: 'varchar', // Last rendered page: 'HOME' | 'OTP' | 'CONFIRM' | 'THANKYOU'
       nullable: true,
     },
-    /** @type {Date} Record creation timestamp */
     createdAt: {
       name: 'created_at',
       type: 'timestamp',
       createDate: true,
     },
-    /** @type {Date} Record last update timestamp */
     updatedAt: {
       name: 'updated_at',
       type: 'timestamp',
       updateDate: true,
     },
-    /** @type {Date|null} Timestamp when partner OTP was successfully verified */
     otpVerifiedAt: {
       name: 'otp_verified_at',
-      type: 'timestamp',
+      type: 'timestamp', // Timestamp when partner OTP was verified
       nullable: true,
     },
-    /** @type {string|null} Post-conversion delayed checksub result ('ACTIVE', 'GRACE', 'PARKING', 'INACTIVE') */
     checksubStatus: {
       name: 'checksub_status',
       type: 'varchar',
-      length: 32,
+      length: 32, // Delayed checksub result ('ACTIVE', 'GRACE', 'PARKING', 'INACTIVE')
       nullable: true,
     },
-    /** @type {Date|null} Timestamp when the 30-minute delayed checksub worker evaluated this visit */
     checksubExecutedAt: {
       name: 'checksub_executed_at',
-      type: 'timestamp',
+      type: 'timestamp', // Timestamp when 30-min delayed checksub evaluated this visit
       nullable: true,
     },
-    /** @type {string|null} Raw response body from delayed checksub execution */
     checksubResponse: {
       name: 'checksub_response',
-      type: 'text',
+      type: 'text', // Raw response body from delayed checksub
       nullable: true,
     },
   },
   relations: {
-    /** @type {import('./visit-event.entity.js').VisitEvent[]} Detailed clickstream timeline events for this visit */
     events: {
       type: 'one-to-many',
       target: 'VisitEvent',

@@ -38,6 +38,16 @@ This directory contains standalone operational, maintenance, database, testing, 
 
 ---
 
-## Backward Compatibility Shims
+## Unified Script Runner (`run.mjs`)
 
-For maximum backward compatibility, all previous script paths at `backend/scripts/*.mjs` and `backend/seed_*.js` are preserved as delegation shims pointing into their respective categorized subdirectories.
+All operational, report, testing, and debugging scripts can be run from the unified CLI runner:
+
+```bash
+# List all available scripts and categories
+node backend/scripts/run.mjs --list
+
+# Run any script by name
+node backend/scripts/run.mjs generate-zain-excel
+node backend/scripts/run.mjs e2e-detect-flow
+node backend/scripts/run.mjs setup-db
+```
