@@ -13,7 +13,8 @@ export class TrackingCampidAndVendorCampid1860000000000 {
     try {
       await queryRunner.query(sql);
     } catch (err) {
-      if (!/already exists|duplicate|does not exist/i.test(err.message)) throw err;
+      if (!/already exists|duplicate|does not exist/i.test(err.message))
+        throw err;
     }
   }
 
@@ -63,13 +64,20 @@ export class TrackingCampidAndVendorCampid1860000000000 {
         await queryRunner.query(
           `UPDATE "conversion_postbacks" SET "campid" = "tracking_campid" WHERE "campid" IS NULL`,
         );
-      } else if (!(await queryRunner.hasColumn('conversion_postbacks', 'campid'))) {
+      } else if (
+        !(await queryRunner.hasColumn('conversion_postbacks', 'campid'))
+      ) {
         await queryRunner.query(
           `ALTER TABLE "conversion_postbacks" ADD COLUMN "campid" varchar(128)`,
         );
       }
 
-      if (!(await queryRunner.hasColumn('conversion_postbacks', 'tracking_campid'))) {
+      if (
+        !(await queryRunner.hasColumn(
+          'conversion_postbacks',
+          'tracking_campid',
+        ))
+      ) {
         await queryRunner.query(
           `ALTER TABLE "conversion_postbacks" ADD COLUMN "tracking_campid" varchar(128)`,
         );

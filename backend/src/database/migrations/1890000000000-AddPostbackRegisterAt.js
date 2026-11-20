@@ -16,7 +16,9 @@ export class AddPostbackRegisterAt1890000000000 {
           `ALTER TABLE "campaigns" ADD COLUMN "postback_register_at" varchar(16) NOT NULL DEFAULT 'confirm'`,
         );
       }
-    } else if (!(await queryRunner.hasColumn('campaigns', 'postback_register_at'))) {
+    } else if (
+      !(await queryRunner.hasColumn('campaigns', 'postback_register_at'))
+    ) {
       await queryRunner.query(
         `ALTER TABLE \`campaigns\` ADD COLUMN \`postback_register_at\` varchar(16) NOT NULL DEFAULT 'confirm'`,
       );

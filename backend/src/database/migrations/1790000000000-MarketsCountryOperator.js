@@ -243,7 +243,9 @@ export class MarketsCountryOperator1790000000000 {
               `INSERT INTO \`countries\` (\`name\`, \`code\`, \`user_id\`) VALUES (?, ?, ?)`,
               [row.country, countryCode, row.user_id],
             );
-            const inserted = await queryRunner.query(`SELECT LAST_INSERT_ID() AS id`);
+            const inserted = await queryRunner.query(
+              `SELECT LAST_INSERT_ID() AS id`,
+            );
             countryId = inserted[0].id;
           }
           countryCache.set(countryKey, countryId);
@@ -263,7 +265,9 @@ export class MarketsCountryOperator1790000000000 {
               `INSERT INTO \`operators\` (\`name\`, \`code\`, \`country_id\`, \`user_id\`) VALUES (?, ?, ?, ?)`,
               [row.operator, operatorCode, countryId, row.user_id],
             );
-            const insertedOp = await queryRunner.query(`SELECT LAST_INSERT_ID() AS id`);
+            const insertedOp = await queryRunner.query(
+              `SELECT LAST_INSERT_ID() AS id`,
+            );
             operatorId = insertedOp[0].id;
           }
           operatorCache.set(operatorKey, operatorId);
@@ -302,6 +306,8 @@ export class MarketsCountryOperator1790000000000 {
 
   async down(queryRunner) {
     // Disabled down migration to protect tables from accidental drop/data loss
-    throw new Error('Down migrations are disabled to prevent accidental table drops.');
+    throw new Error(
+      'Down migrations are disabled to prevent accidental table drops.',
+    );
   }
 }

@@ -85,6 +85,8 @@ export class AddDailyStats1930000000000 {
 
   async down(queryRunner) {
     // Disabled down migration to protect tables from accidental drop/data loss
-    throw new Error('Down migrations are disabled to prevent accidental table drops.');
+    throw new Error(
+      'Down migrations are disabled to prevent accidental table drops.',
+    );
   }
 }

@@ -7,12 +7,12 @@ import {
   resolveAttributionParams,
   resolveCampidParams,
 } from './helpers/request.util.js';
-import { priorityCheck } from './helpers/priority.controller.js';
+import { priorityCheck } from './detect/priority.js';
 import { universeDcbService } from './universe-dcb.service.js';
 import { universeDcbExposeService } from './universe-dcb-expose.service.js';
 import { orangeBfService } from './orange-bf.service.js';
 import { orangeBfExposeService } from './orange-bf-expose.service.js';
-import { flowEngineService } from './flow-engine.service.js';
+import { flowEngineService } from './core/engine.js';
 import {
   decorateUniverseDcbDetectResponse,
   decorateUniverseDcbPageResponse,

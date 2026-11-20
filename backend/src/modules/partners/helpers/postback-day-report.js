@@ -1,7 +1,10 @@
 import { ConversionPostbackStatus } from '../../../database/entities/conversion-postback.entity.js';
 import { ApiCallType } from '../../../database/entities/api-call-log.entity.js';
 import { VisitEventType } from '../../../database/entities/visit-event.entity.js';
-import { DEFAULT_TIMEZONE, normalizeTimezone } from '../../../common/zoned-day.js';
+import {
+  DEFAULT_TIMEZONE,
+  normalizeTimezone,
+} from '../../../common/zoned-day.js';
 
 export const DAY_REPORT_HE_LOG_TYPES = [
   ApiCallType.HE_REDIRECT,
@@ -169,9 +172,13 @@ export function summarizeHits(hits = []) {
   };
   for (const hit of hits) {
     if (hit.callType === ApiCallType.BILLING_CALLBACK) summary.billingHits += 1;
-    else if (hit.callType === ApiCallType.VENDOR_POSTBACK) summary.vendorHits += 1;
+    else if (hit.callType === ApiCallType.VENDOR_POSTBACK)
+      summary.vendorHits += 1;
     if (hit.unmatched) summary.unmatched += 1;
-    else if (hit.skipped || String(hit.statusLabel || '').toUpperCase() === 'SKIPPED') {
+    else if (
+      hit.skipped ||
+      String(hit.statusLabel || '').toUpperCase() === 'SKIPPED'
+    ) {
       summary.hitFailed += 1;
     } else if (hit.ok) summary.hitOk += 1;
     else summary.hitFailed += 1;
@@ -182,14 +189,16 @@ export function summarizeHits(hits = []) {
 }
 
 export function formatHitLogLine(hit, timezone) {
-  const when = formatInZone(hit.at || hit.createdAt || new Date(), timezone) || '—';
+  const when =
+    formatInZone(hit.at || hit.createdAt || new Date(), timezone) || '—';
   const type = String(hit.callType || 'hit').padEnd(18);
   const status = String(
     hit.statusLabel || (hit.success === false ? 'FAILED' : 'OK'),
   ).padEnd(10);
-  const number = hit.msisdn || hit.msisdnReceived
-    ? `msisdn=${hit.msisdn || 'YES'}`
-    : 'msisdn=NO';
+  const number =
+    hit.msisdn || hit.msisdnReceived
+      ? `msisdn=${hit.msisdn || 'YES'}`
+      : 'msisdn=NO';
   const click = `click=${hit.clickId || '—'}`;
   const visit = hit.visitId ? `visit=#${hit.visitId}` : 'visit=—';
   const http =
@@ -242,8 +251,12 @@ export function buildNumberStory({
   vendor = null,
   campaign = null,
 } = {}) {
-  const billingLogs = logs.filter((l) => l.callType === ApiCallType.BILLING_CALLBACK);
-  const vendorLogs = logs.filter((l) => l.callType === ApiCallType.VENDOR_POSTBACK);
+  const billingLogs = logs.filter(
+    (l) => l.callType === ApiCallType.BILLING_CALLBACK,
+  );
+  const vendorLogs = logs.filter(
+    (l) => l.callType === ApiCallType.VENDOR_POSTBACK,
+  );
   const callbackEvents = events.filter(
     (e) => e.eventType === VisitEventType.CALLBACK_RECEIVED,
   );
@@ -279,7 +292,10 @@ export function buildNumberStory({
     vendorLogs.length > 0;
 
   let vendorFireStatus = 'none';
-  if (status === ConversionPostbackStatus.SENT || latestVendorLog?.success === true) {
+  if (
+    status === ConversionPostbackStatus.SENT ||
+    latestVendorLog?.success === true
+  ) {
     vendorFireStatus = ConversionPostbackStatus.SENT;
   } else if (
     status === ConversionPostbackStatus.FAILED ||
@@ -296,7 +312,8 @@ export function buildNumberStory({
 
   const unmatchedLog = billingLogs.find((l) => isUnmatchedBillingLog(l));
   const unmatchedBody = parseLogJson(unmatchedLog?.requestBody);
-  const unmatchedReason = unmatchedBody?.reason || unmatchedLog?.errorMessage || '';
+  const unmatchedReason =
+    unmatchedBody?.reason || unmatchedLog?.errorMessage || '';
 
   let outcome = 'not_queued';
   let outcomeLabel =
@@ -315,11 +332,17 @@ export function buildNumberStory({
     outcome = 'callback_no_row';
     outcomeLabel =
       'CALLBACK WITH NO QUEUE — operator hit /callback but there was no pending postback row for this MSISDN, so vendor CPA was not fired.';
-  } else if (status === ConversionPostbackStatus.SENT || vendorFireStatus === 'sent') {
+  } else if (
+    status === ConversionPostbackStatus.SENT ||
+    vendorFireStatus === 'sent'
+  ) {
     outcome = 'complete';
     outcomeLabel =
       'COMPLETE — billing callback received and vendor CPA postback fired successfully.';
-  } else if (status === ConversionPostbackStatus.FAILED || vendorFireStatus === 'failed') {
+  } else if (
+    status === ConversionPostbackStatus.FAILED ||
+    vendorFireStatus === 'failed'
+  ) {
     outcome = 'fire_failed';
     outcomeLabel =
       'FIRE FAILED — billing callback received (or fire attempted) but vendor CPA HTTP failed.';
@@ -372,8 +395,10 @@ export function buildNumberStory({
     })),
   ].sort((a, b) => ts(a.at) - ts(b.at));
 
-  const visitId = postback?.visitId || logs.find((l) => l.visitId)?.visitId || null;
-  const clickId = postback?.clickId || logs.find((l) => l.clickId)?.clickId || null;
+  const visitId =
+    postback?.visitId || logs.find((l) => l.visitId)?.visitId || null;
+  const clickId =
+    postback?.clickId || logs.find((l) => l.clickId)?.clickId || null;
   const digits = digitsMsisdn(msisdn);
 
   return {
@@ -402,10 +427,7 @@ export function buildNumberStory({
     redirectedToCg: Boolean(failCgLog),
     cgUrl: failCgLog?.requestUrl || '',
     heError:
-      failCgLog?.errorMessage ||
-      failCgBody?.heError ||
-      failCgBody?.error ||
-      '',
+      failCgLog?.errorMessage || failCgBody?.heError || failCgBody?.error || '',
     heProvider: failCgBody?.heProvider || '',
     heRedirectedAt: failCgLog?.createdAt || null,
     queued,
@@ -419,11 +441,13 @@ export function buildNumberStory({
     billingHttp: latestBilling?.responseStatus ?? null,
     vendorFired,
     vendorFireStatus,
-    vendorFiredAt:
-      postback?.sentAt || latestVendorLog?.createdAt || null,
+    vendorFiredAt: postback?.sentAt || latestVendorLog?.createdAt || null,
     vendorHttp: postback?.httpStatus ?? latestVendorLog?.responseStatus ?? null,
     vendorUrl: postback?.postbackUrl || latestVendorLog?.requestUrl || '',
-    vendorResponse: clip(postback?.responseBody || latestVendorLog?.responseBody, 800),
+    vendorResponse: clip(
+      postback?.responseBody || latestVendorLog?.responseBody,
+      800,
+    ),
     vendorError: postback?.errorMessage || latestVendorLog?.errorMessage || '',
     outcome,
     outcomeLabel,
@@ -466,7 +490,8 @@ export function summarizeStories(numbers) {
     else summary.notQueued += 1;
     if (n.billingReceived) summary.billingReceived += 1;
     else summary.billingMissing += 1;
-    if (n.vendorFireStatus === ConversionPostbackStatus.SENT) summary.vendorSent += 1;
+    if (n.vendorFireStatus === ConversionPostbackStatus.SENT)
+      summary.vendorSent += 1;
     else if (n.vendorFireStatus === ConversionPostbackStatus.FAILED) {
       summary.vendorFailed += 1;
     } else if (n.vendorFireStatus === ConversionPostbackStatus.SKIPPED) {
@@ -537,7 +562,9 @@ export function formatDayReportText(report, timezone) {
   lines.push('  2. RECEIVED — did billing/operator hit /api/flow/callback?');
   lines.push('  3. FIRED    — did we GET the vendor CPA postback URL?');
   lines.push('  NUMBER    — did the callback include an MSISDN?');
-  lines.push('  HE fail → CG — token/resolve returned no number; user sent to CG URL.');
+  lines.push(
+    '  HE fail → CG — token/resolve returned no number; user sent to CG URL.',
+  );
   lines.push('');
 
   const hits = report.hits || [];
@@ -622,11 +649,14 @@ export function formatDayReportText(report, timezone) {
     if (n.heError) lines.push(`  HE error: ${n.heError}`);
     if (n.vendorUrl) lines.push(`  Vendor URL: ${n.vendorUrl}`);
     if (n.vendorError) lines.push(`  Vendor error: ${n.vendorError}`);
-    if (n.vendorResponse) lines.push(`  Vendor response: ${clip(n.vendorResponse, 300)}`);
+    if (n.vendorResponse)
+      lines.push(`  Vendor response: ${clip(n.vendorResponse, 300)}`);
     lines.push('');
     lines.push('  Timeline:');
     if (!n.timeline?.length) {
-      lines.push('    (no api_call_logs / visit_events for this number on this date)');
+      lines.push(
+        '    (no api_call_logs / visit_events for this number on this date)',
+      );
     } else {
       for (const ev of n.timeline) {
         const t = formatInZone(ev.at, tz) || '—';
@@ -635,7 +665,11 @@ export function formatDayReportText(report, timezone) {
         );
         if (ev.url) lines.push(`      URL: ${ev.url}`);
         if (ev.error) lines.push(`      error: ${ev.error}`);
-        if (ev.body && (ev.type === ApiCallType.VENDOR_POSTBACK || ev.type === ApiCallType.BILLING_CALLBACK)) {
+        if (
+          ev.body &&
+          (ev.type === ApiCallType.VENDOR_POSTBACK ||
+            ev.type === ApiCallType.BILLING_CALLBACK)
+        ) {
           lines.push(`      body: ${clip(ev.body, 240)}`);
         }
       }

@@ -7,7 +7,9 @@ export class AddOperatorStatusOnPostbacks1960000000000 {
   async up(queryRunner) {
     const isPostgres = queryRunner.connection.options.type === 'postgres';
     if (!(await queryRunner.hasTable('conversion_postbacks'))) return;
-    if (await queryRunner.hasColumn('conversion_postbacks', 'operator_status')) {
+    if (
+      await queryRunner.hasColumn('conversion_postbacks', 'operator_status')
+    ) {
       return;
     }
 
@@ -31,7 +33,9 @@ export class AddOperatorStatusOnPostbacks1960000000000 {
   async down(queryRunner) {
     const isPostgres = queryRunner.connection.options.type === 'postgres';
     if (!(await queryRunner.hasTable('conversion_postbacks'))) return;
-    if (!(await queryRunner.hasColumn('conversion_postbacks', 'operator_status'))) {
+    if (
+      !(await queryRunner.hasColumn('conversion_postbacks', 'operator_status'))
+    ) {
       return;
     }
 

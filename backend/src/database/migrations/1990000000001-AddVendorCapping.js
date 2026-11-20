@@ -14,63 +14,93 @@ export class AddVendorCapping1990000000001 {
     const isPostgres = queryRunner.connection.options.type === 'postgres';
 
     if (isPostgres) {
-      if (!(await queryRunner.hasColumn('campaign_trackings', 'capping_enabled'))) {
+      if (
+        !(await queryRunner.hasColumn('campaign_trackings', 'capping_enabled'))
+      ) {
         await queryRunner.query(
           `ALTER TABLE "campaign_trackings" ADD COLUMN "capping_enabled" boolean NOT NULL DEFAULT false`,
         );
       }
-      if (!(await queryRunner.hasColumn('campaign_trackings', 'capping_metric'))) {
+      if (
+        !(await queryRunner.hasColumn('campaign_trackings', 'capping_metric'))
+      ) {
         await queryRunner.query(
           `ALTER TABLE "campaign_trackings" ADD COLUMN "capping_metric" varchar(16) NOT NULL DEFAULT 'conversions'`,
         );
       }
-      if (!(await queryRunner.hasColumn('campaign_trackings', 'capping_limit'))) {
+      if (
+        !(await queryRunner.hasColumn('campaign_trackings', 'capping_limit'))
+      ) {
         await queryRunner.query(
           `ALTER TABLE "campaign_trackings" ADD COLUMN "capping_limit" int NULL`,
         );
       }
-      if (!(await queryRunner.hasColumn('campaign_trackings', 'capping_action'))) {
+      if (
+        !(await queryRunner.hasColumn('campaign_trackings', 'capping_action'))
+      ) {
         await queryRunner.query(
           `ALTER TABLE "campaign_trackings" ADD COLUMN "capping_action" varchar(16) NOT NULL DEFAULT 'stop'`,
         );
       }
-      if (!(await queryRunner.hasColumn('campaign_trackings', 'fallback_campaign_id'))) {
+      if (
+        !(await queryRunner.hasColumn(
+          'campaign_trackings',
+          'fallback_campaign_id',
+        ))
+      ) {
         await queryRunner.query(
           `ALTER TABLE "campaign_trackings" ADD COLUMN "fallback_campaign_id" int NULL`,
         );
       }
-      if (!(await queryRunner.hasColumn('campaign_trackings', 'capping_interval'))) {
+      if (
+        !(await queryRunner.hasColumn('campaign_trackings', 'capping_interval'))
+      ) {
         await queryRunner.query(
           `ALTER TABLE "campaign_trackings" ADD COLUMN "capping_interval" varchar(16) NOT NULL DEFAULT 'daily'`,
         );
       }
     } else {
-      if (!(await queryRunner.hasColumn('campaign_trackings', 'capping_enabled'))) {
+      if (
+        !(await queryRunner.hasColumn('campaign_trackings', 'capping_enabled'))
+      ) {
         await queryRunner.query(
           `ALTER TABLE \`campaign_trackings\` ADD COLUMN \`capping_enabled\` tinyint(1) NOT NULL DEFAULT 0`,
         );
       }
-      if (!(await queryRunner.hasColumn('campaign_trackings', 'capping_metric'))) {
+      if (
+        !(await queryRunner.hasColumn('campaign_trackings', 'capping_metric'))
+      ) {
         await queryRunner.query(
           `ALTER TABLE \`campaign_trackings\` ADD COLUMN \`capping_metric\` varchar(16) NOT NULL DEFAULT 'conversions'`,
         );
       }
-      if (!(await queryRunner.hasColumn('campaign_trackings', 'capping_limit'))) {
+      if (
+        !(await queryRunner.hasColumn('campaign_trackings', 'capping_limit'))
+      ) {
         await queryRunner.query(
           `ALTER TABLE \`campaign_trackings\` ADD COLUMN \`capping_limit\` int NULL`,
         );
       }
-      if (!(await queryRunner.hasColumn('campaign_trackings', 'capping_action'))) {
+      if (
+        !(await queryRunner.hasColumn('campaign_trackings', 'capping_action'))
+      ) {
         await queryRunner.query(
           `ALTER TABLE \`campaign_trackings\` ADD COLUMN \`capping_action\` varchar(16) NOT NULL DEFAULT 'stop'`,
         );
       }
-      if (!(await queryRunner.hasColumn('campaign_trackings', 'fallback_campaign_id'))) {
+      if (
+        !(await queryRunner.hasColumn(
+          'campaign_trackings',
+          'fallback_campaign_id',
+        ))
+      ) {
         await queryRunner.query(
           `ALTER TABLE \`campaign_trackings\` ADD COLUMN \`fallback_campaign_id\` int NULL`,
         );
       }
-      if (!(await queryRunner.hasColumn('campaign_trackings', 'capping_interval'))) {
+      if (
+        !(await queryRunner.hasColumn('campaign_trackings', 'capping_interval'))
+      ) {
         await queryRunner.query(
           `ALTER TABLE \`campaign_trackings\` ADD COLUMN \`capping_interval\` varchar(16) NOT NULL DEFAULT 'daily'`,
         );

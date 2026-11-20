@@ -123,7 +123,10 @@ export const istDateKey = (now = new Date()) => {
 };
 
 export const bucketFromDecisionKey = (decisionKey) => {
-  const hash = crypto.createHash('sha256').update(String(decisionKey)).digest('hex');
+  const hash = crypto
+    .createHash('sha256')
+    .update(String(decisionKey))
+    .digest('hex');
   return parseInt(hash.slice(0, 8), 16) % 10000;
 };
 
@@ -231,7 +234,8 @@ export const createApprovalControl = ({
         String(APPROVAL_CONTROL_TTL_SECONDS),
       );
       const status =
-        Array.isArray(result) && (result[0] === 'approved' || result[0] === 'pending')
+        Array.isArray(result) &&
+        (result[0] === 'approved' || result[0] === 'pending')
           ? result[0]
           : hashFallbackStatus(seed, percentage);
       await rememberDecision(client, cacheKey, status);

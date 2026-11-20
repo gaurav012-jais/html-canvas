@@ -1,22 +1,14 @@
 export class AddPartnersFlowAndAttribution1770000000000 {
   name = 'AddPartnersFlowAndAttribution1770000000000';
 
-  async addColumnIfMissing(
-    queryRunner,
-    table,
-    column,
-    ddl,
-  ) {
+  async addColumnIfMissing(queryRunner, table, column, ddl) {
     const has = await queryRunner.hasColumn(table, column);
     if (!has) {
       await queryRunner.query(ddl);
     }
   }
 
-  async safeQuery(
-    queryRunner,
-    sql,
-  ) {
+  async safeQuery(queryRunner, sql) {
     try {
       await queryRunner.query(sql);
     } catch {
@@ -247,6 +239,8 @@ export class AddPartnersFlowAndAttribution1770000000000 {
 
   async down(queryRunner) {
     // Disabled down migration to protect tables from accidental drop/data loss
-    throw new Error('Down migrations are disabled to prevent accidental table drops.');
+    throw new Error(
+      'Down migrations are disabled to prevent accidental table drops.',
+    );
   }
 }

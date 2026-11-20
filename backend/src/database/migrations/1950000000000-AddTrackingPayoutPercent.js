@@ -8,7 +8,8 @@ export class AddTrackingPayoutPercent1950000000000 {
     const isPostgres = queryRunner.connection.options.type === 'postgres';
 
     if (!(await queryRunner.hasTable('campaign_trackings'))) return;
-    if (await queryRunner.hasColumn('campaign_trackings', 'payout_percent')) return;
+    if (await queryRunner.hasColumn('campaign_trackings', 'payout_percent'))
+      return;
 
     if (isPostgres) {
       await queryRunner.query(`
@@ -26,7 +27,8 @@ export class AddTrackingPayoutPercent1950000000000 {
   async down(queryRunner) {
     const isPostgres = queryRunner.connection.options.type === 'postgres';
     if (!(await queryRunner.hasTable('campaign_trackings'))) return;
-    if (!(await queryRunner.hasColumn('campaign_trackings', 'payout_percent'))) return;
+    if (!(await queryRunner.hasColumn('campaign_trackings', 'payout_percent')))
+      return;
 
     if (isPostgres) {
       await queryRunner.query(

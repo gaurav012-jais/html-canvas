@@ -1,18 +1,14 @@
 import { memo, useEffect, useState, useMemo, useCallback } from 'react'
-import { Link, useNavigate, useParams } from 'react-router-dom'
+import { useNavigate, useParams } from 'react-router-dom'
 import {
-  ArrowLeft,
   ExternalLink,
-  Pencil,
   Settings,
   FileText,
   Store,
-  AlertCircle,
 } from 'lucide-react'
 import useStore from '../../store/useStore'
 import AppShell from '../../components/ui/AppShell'
 import Button from '../../components/ui/Button'
-import Input from '../../components/ui/Input'
 import { copyToClipboard } from '../../utils/clipboard'
 import { marketPath, resolveMarketCodes } from '../../utils/routes'
 import { getCampaignPreviewUrl, getCampaignVendorStats } from '../../services/api/campaigns'
@@ -24,34 +20,7 @@ import { effectiveCallbackStatuses } from '../../components/partners/AllowedCall
 import { resolveCampaignDetailFlow } from './flows'
 import VendorStatsSection from './VendorStatsSection'
 import VendorAssignModal from './VendorAssignModal'
-
-function CompactStatusToggle({ active, onToggle, disabled, activating, blockedReason }) {
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={active}
-      aria-label={active ? 'Deactivate campaign' : 'Activate campaign'}
-      disabled={disabled || activating}
-      title={blockedReason || (active ? 'Deactivate' : 'Activate')}
-      onClick={onToggle}
-      className={`
-        relative inline-flex h-7 w-12 shrink-0 items-center rounded-full
-        transition-colors duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring
-        disabled:cursor-not-allowed disabled:opacity-50
-        ${active ? 'bg-success' : 'bg-bg-canvas border border-border'}
-      `}
-    >
-      <span
-        className={`
-          inline-block h-5 w-5 transform rounded-full bg-white shadow-sm
-          transition-transform duration-200
-          ${active ? 'translate-x-[1.15rem]' : 'translate-x-0.5'}
-        `}
-      />
-    </button>
-  )
-}
+import CampaignHeader from './CampaignHeader'
 
 function CampaignDetailPage() {
   const { id, countryCode: routeCountry, operatorCode: routeOperator } = useParams()
@@ -529,100 +498,21 @@ function CampaignDetailPage() {
   return (
     <AppShell actions={pageActions}>
       <div className="page-container">
-        <button
-          type="button"
-          onClick={() => navigate(backToMarket)}
-          className="inline-flex items-center gap-1.5 text-sm text-fg-muted hover:text-fg mb-3 transition-colors"
-        >
-          <ArrowLeft className="w-4 h-4" />
-          Back to market
-        </button>
-
-        <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
-          <div className="min-w-0">
-            <p className="text-xs text-fg-subtle mb-1">
-              <Link to="/markets" className="hover:text-fg">
-                Markets
-              </Link>
-              {' / '}
-              <Link to={backToMarket} className="hover:text-fg">
-                {campaign.country} / {campaign.operator}
-              </Link>
-            </p>
-            <div className="flex flex-wrap items-center gap-2.5">
-              {editingName ? (
-                <div className="flex flex-wrap items-center gap-2">
-                  <Input
-                    value={nameDraft}
-                    onChange={(e) => setNameDraft(e.target.value)}
-                    className="max-w-md"
-                    autoFocus
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') handleSaveName()
-                      if (e.key === 'Escape') {
-                        setNameDraft(campaign.name || '')
-                        setEditingName(false)
-                      }
-                    }}
-                  />
-                  <Button
-                    variant="primary"
-                    size="sm"
-                    onClick={handleSaveName}
-                    disabled={savingName || !nameDraft.trim()}
-                  >
-                    {savingName ? 'Saving...' : 'Save'}
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => {
-                      setNameDraft(campaign.name || '')
-                      setEditingName(false)
-                    }}
-                    disabled={savingName}
-                  >
-                    Cancel
-                  </Button>
-                </div>
-              ) : (
-                <>
-                  <h1 className="page-header-title">{campaign.name}</h1>
-                  <button
-                    type="button"
-                    className="p-1.5 text-fg-muted hover:text-accent rounded-md hover:bg-accent-muted transition-colors"
-                    title="Edit campaign name"
-                    onClick={() => setEditingName(true)}
-                  >
-                    <Pencil className="w-4 h-4" />
-                  </button>
-                </>
-              )}
-              <span className={`badge ${campaign.active ? 'badge-success' : 'badge-muted'}`}>
-                {campaign.active ? 'Active' : 'Draft'}
-              </span>
-              {!canActivate && !campaign.active && (
-                <span className="text-[11px] text-warning flex items-center gap-1">
-                  <AlertCircle className="w-3 h-3" />
-                  Pages incomplete
-                </span>
-              )}
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2.5 shrink-0">
-            <span className="text-xs text-fg-muted">
-              {campaign.active ? 'Live' : 'Offline'}
-            </span>
-            <CompactStatusToggle
-              active={!!campaign.active}
-              onToggle={handleToggleActive}
-              disabled={!campaign.active && !canActivate}
-              activating={activating}
-              blockedReason={activateBlockedReason}
-            />
-          </div>
-        </div>
+        <CampaignHeader
+          campaign={campaign}
+          backToMarket={backToMarket}
+          onNavigateBack={() => navigate(backToMarket)}
+          editingName={editingName}
+          setEditingName={setEditingName}
+          nameDraft={nameDraft}
+          setNameDraft={setNameDraft}
+          savingName={savingName}
+          onSaveName={handleSaveName}
+          canActivate={canActivate}
+          activating={activating}
+          activateBlockedReason={activateBlockedReason}
+          onToggleActive={handleToggleActive}
+        />
 
         <div id="flow" className="scroll-mt-4">
           <CampaignFlowBuilder

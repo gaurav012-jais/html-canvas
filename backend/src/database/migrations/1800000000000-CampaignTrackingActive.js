@@ -6,7 +6,10 @@ export class CampaignTrackingActive1800000000000 {
 
     if (!(await queryRunner.hasTable('campaign_trackings'))) return;
 
-    const hasActive = await queryRunner.hasColumn('campaign_trackings', 'active');
+    const hasActive = await queryRunner.hasColumn(
+      'campaign_trackings',
+      'active',
+    );
     if (hasActive) return;
 
     if (isPostgres) {
@@ -28,9 +31,13 @@ export class CampaignTrackingActive1800000000000 {
     if (!(await queryRunner.hasColumn('campaign_trackings', 'active'))) return;
 
     if (isPostgres) {
-      await queryRunner.query(`ALTER TABLE "campaign_trackings" DROP COLUMN "active"`);
+      await queryRunner.query(
+        `ALTER TABLE "campaign_trackings" DROP COLUMN "active"`,
+      );
     } else {
-      await queryRunner.query(`ALTER TABLE \`campaign_trackings\` DROP COLUMN \`active\``);
+      await queryRunner.query(
+        `ALTER TABLE \`campaign_trackings\` DROP COLUMN \`active\``,
+      );
     }
   }
 }

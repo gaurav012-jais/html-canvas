@@ -31,7 +31,9 @@ function pageRecord(page) {
 }
 
 export function getDefaultFunnelPageData(pageType, options = {}) {
-  const rawMode = String(options.verificationMode || options.mode || '').toUpperCase();
+  const rawMode = String(
+    options.verificationMode || options.mode || '',
+  ).toUpperCase();
   const mode = rawMode === 'MSISDN_ONLY' ? 'HEADER_INJECTION' : rawMode;
 
   // Separate dedicated defaults per flow

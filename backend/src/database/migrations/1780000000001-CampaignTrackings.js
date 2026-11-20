@@ -25,18 +25,36 @@ export class CampaignTrackings1780000000001 {
           )
         `);
 
-        await this.safeQuery(queryRunner, `CREATE INDEX "IDX_campaign_trackings_campaign_id" ON "campaign_trackings" ("campaign_id")`);
-        await this.safeQuery(queryRunner, `CREATE INDEX "IDX_campaign_trackings_vendor_id" ON "campaign_trackings" ("vendor_id")`);
-        await this.safeQuery(queryRunner, `CREATE INDEX "IDX_campaign_trackings_affiliate_id" ON "campaign_trackings" ("affiliate_id")`);
+        await this.safeQuery(
+          queryRunner,
+          `CREATE INDEX "IDX_campaign_trackings_campaign_id" ON "campaign_trackings" ("campaign_id")`,
+        );
+        await this.safeQuery(
+          queryRunner,
+          `CREATE INDEX "IDX_campaign_trackings_vendor_id" ON "campaign_trackings" ("vendor_id")`,
+        );
+        await this.safeQuery(
+          queryRunner,
+          `CREATE INDEX "IDX_campaign_trackings_affiliate_id" ON "campaign_trackings" ("affiliate_id")`,
+        );
 
-        await this.safeQuery(queryRunner, `ALTER TABLE "campaign_trackings" ADD CONSTRAINT "FK_campaign_trackings_campaign" FOREIGN KEY ("campaign_id") REFERENCES "campaigns"("id") ON DELETE CASCADE ON UPDATE CASCADE`);
-        await this.safeQuery(queryRunner, `ALTER TABLE "campaign_trackings" ADD CONSTRAINT "FK_campaign_trackings_vendor" FOREIGN KEY ("vendor_id") REFERENCES "vendors"("id") ON DELETE CASCADE ON UPDATE CASCADE`);
-        await this.safeQuery(queryRunner, `ALTER TABLE "campaign_trackings" ADD CONSTRAINT "FK_campaign_trackings_affiliate" FOREIGN KEY ("affiliate_id") REFERENCES "affiliates"("id") ON DELETE CASCADE ON UPDATE CASCADE`);
+        await this.safeQuery(
+          queryRunner,
+          `ALTER TABLE "campaign_trackings" ADD CONSTRAINT "FK_campaign_trackings_campaign" FOREIGN KEY ("campaign_id") REFERENCES "campaigns"("id") ON DELETE CASCADE ON UPDATE CASCADE`,
+        );
+        await this.safeQuery(
+          queryRunner,
+          `ALTER TABLE "campaign_trackings" ADD CONSTRAINT "FK_campaign_trackings_vendor" FOREIGN KEY ("vendor_id") REFERENCES "vendors"("id") ON DELETE CASCADE ON UPDATE CASCADE`,
+        );
+        await this.safeQuery(
+          queryRunner,
+          `ALTER TABLE "campaign_trackings" ADD CONSTRAINT "FK_campaign_trackings_affiliate" FOREIGN KEY ("affiliate_id") REFERENCES "affiliates"("id") ON DELETE CASCADE ON UPDATE CASCADE`,
+        );
 
         if (await queryRunner.hasTable('campaign_vendors')) {
           await this.safeQuery(
             queryRunner,
-            `INSERT INTO "campaign_trackings" ("campaign_id", "vendor_id") SELECT "campaign_id", "vendor_id" FROM "campaign_vendors"`
+            `INSERT INTO "campaign_trackings" ("campaign_id", "vendor_id") SELECT "campaign_id", "vendor_id" FROM "campaign_vendors"`,
           );
           // Table drops disabled to prevent accidental data loss
           // await this.safeQuery(queryRunner, `DROP TABLE "campaign_vendors"`);
@@ -64,7 +82,7 @@ export class CampaignTrackings1780000000001 {
         if (await queryRunner.hasTable('campaign_vendors')) {
           await this.safeQuery(
             queryRunner,
-            `INSERT INTO \`campaign_trackings\` (\`campaign_id\`, \`vendor_id\`) SELECT \`campaign_id\`, \`vendor_id\` FROM \`campaign_vendors\``
+            `INSERT INTO \`campaign_trackings\` (\`campaign_id\`, \`vendor_id\`) SELECT \`campaign_id\`, \`vendor_id\` FROM \`campaign_vendors\``,
           );
           // Table drops disabled to prevent accidental data loss
           // await this.safeQuery(queryRunner, `DROP TABLE \`campaign_vendors\``);
@@ -75,6 +93,8 @@ export class CampaignTrackings1780000000001 {
 
   async down(queryRunner) {
     // Disabled down migration to protect tables from accidental drop/data loss
-    throw new Error('Down migrations are disabled to prevent accidental table drops.');
+    throw new Error(
+      'Down migrations are disabled to prevent accidental table drops.',
+    );
   }
 }

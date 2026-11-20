@@ -7,7 +7,8 @@ export class AddOperatorStatusJsonOnDailyStats1970000000000 {
   async up(queryRunner) {
     const isPostgres = queryRunner.connection.options.type === 'postgres';
     if (!(await queryRunner.hasTable('daily_stats'))) return;
-    if (await queryRunner.hasColumn('daily_stats', 'operator_status_json')) return;
+    if (await queryRunner.hasColumn('daily_stats', 'operator_status_json'))
+      return;
 
     if (isPostgres) {
       await queryRunner.query(`
@@ -25,7 +26,8 @@ export class AddOperatorStatusJsonOnDailyStats1970000000000 {
   async down(queryRunner) {
     const isPostgres = queryRunner.connection.options.type === 'postgres';
     if (!(await queryRunner.hasTable('daily_stats'))) return;
-    if (!(await queryRunner.hasColumn('daily_stats', 'operator_status_json'))) return;
+    if (!(await queryRunner.hasColumn('daily_stats', 'operator_status_json')))
+      return;
 
     if (isPostgres) {
       await queryRunner.query(

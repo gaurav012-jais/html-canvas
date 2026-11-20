@@ -9,12 +9,16 @@ export class AddChecksubConfigJson1900000000000 {
     const isPostgres = queryRunner.connection.options.type === 'postgres';
 
     if (isPostgres) {
-      if (!(await queryRunner.hasColumn('api_configs', 'checksub_config_json'))) {
+      if (
+        !(await queryRunner.hasColumn('api_configs', 'checksub_config_json'))
+      ) {
         await queryRunner.query(
           `ALTER TABLE "api_configs" ADD COLUMN "checksub_config_json" text`,
         );
       }
-    } else if (!(await queryRunner.hasColumn('api_configs', 'checksub_config_json'))) {
+    } else if (
+      !(await queryRunner.hasColumn('api_configs', 'checksub_config_json'))
+    ) {
       await queryRunner.query(
         `ALTER TABLE \`api_configs\` ADD COLUMN \`checksub_config_json\` text NULL`,
       );

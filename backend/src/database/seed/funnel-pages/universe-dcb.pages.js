@@ -1,6 +1,7 @@
 import { CampaignPageType } from '../../entities/campaign-page.entity.js';
 
-const ff = "'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
+const ff =
+  "'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
 
 const dcbBrandSvg = `
 <div class="dcb-brand">

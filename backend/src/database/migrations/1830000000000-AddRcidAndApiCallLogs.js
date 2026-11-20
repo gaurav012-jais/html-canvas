@@ -9,7 +9,8 @@ export class AddRcidAndApiCallLogs1830000000000 {
     try {
       await queryRunner.query(sql);
     } catch (err) {
-      if (!/already exists|duplicate|does not exist/i.test(err.message)) throw err;
+      if (!/already exists|duplicate|does not exist/i.test(err.message))
+        throw err;
     }
   }
 
@@ -88,6 +89,8 @@ export class AddRcidAndApiCallLogs1830000000000 {
 
   async down(queryRunner) {
     // Disabled down migration to protect tables from accidental drop/data loss
-    throw new Error('Down migrations are disabled to prevent accidental table drops.');
+    throw new Error(
+      'Down migrations are disabled to prevent accidental table drops.',
+    );
   }
 }

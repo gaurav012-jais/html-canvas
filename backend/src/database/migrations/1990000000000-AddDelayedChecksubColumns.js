@@ -16,27 +16,52 @@ export class AddDelayedChecksubColumns1990000000000 {
     const isPostgres = queryRunner.connection.options.type === 'postgres';
 
     if (isPostgres) {
-      if (!(await queryRunner.hasColumn('conversion_postbacks', 'delayed_checksub_status'))) {
+      if (
+        !(await queryRunner.hasColumn(
+          'conversion_postbacks',
+          'delayed_checksub_status',
+        ))
+      ) {
         await queryRunner.query(
           `ALTER TABLE "conversion_postbacks" ADD COLUMN "delayed_checksub_status" varchar(32) NULL`,
         );
       }
-      if (!(await queryRunner.hasColumn('conversion_postbacks', 'delayed_checksub_scheduled_at'))) {
+      if (
+        !(await queryRunner.hasColumn(
+          'conversion_postbacks',
+          'delayed_checksub_scheduled_at',
+        ))
+      ) {
         await queryRunner.query(
           `ALTER TABLE "conversion_postbacks" ADD COLUMN "delayed_checksub_scheduled_at" timestamp NULL`,
         );
       }
-      if (!(await queryRunner.hasColumn('conversion_postbacks', 'delayed_checksub_executed_at'))) {
+      if (
+        !(await queryRunner.hasColumn(
+          'conversion_postbacks',
+          'delayed_checksub_executed_at',
+        ))
+      ) {
         await queryRunner.query(
           `ALTER TABLE "conversion_postbacks" ADD COLUMN "delayed_checksub_executed_at" timestamp NULL`,
         );
       }
-      if (!(await queryRunner.hasColumn('conversion_postbacks', 'delayed_checksub_outcome'))) {
+      if (
+        !(await queryRunner.hasColumn(
+          'conversion_postbacks',
+          'delayed_checksub_outcome',
+        ))
+      ) {
         await queryRunner.query(
           `ALTER TABLE "conversion_postbacks" ADD COLUMN "delayed_checksub_outcome" varchar(64) NULL`,
         );
       }
-      if (!(await queryRunner.hasColumn('conversion_postbacks', 'delayed_checksub_response'))) {
+      if (
+        !(await queryRunner.hasColumn(
+          'conversion_postbacks',
+          'delayed_checksub_response',
+        ))
+      ) {
         await queryRunner.query(
           `ALTER TABLE "conversion_postbacks" ADD COLUMN "delayed_checksub_response" text NULL`,
         );
@@ -46,27 +71,52 @@ export class AddDelayedChecksubColumns1990000000000 {
          ON "conversion_postbacks" ("delayed_checksub_status", "delayed_checksub_scheduled_at")`,
       );
     } else {
-      if (!(await queryRunner.hasColumn('conversion_postbacks', 'delayed_checksub_status'))) {
+      if (
+        !(await queryRunner.hasColumn(
+          'conversion_postbacks',
+          'delayed_checksub_status',
+        ))
+      ) {
         await queryRunner.query(
           `ALTER TABLE \`conversion_postbacks\` ADD COLUMN \`delayed_checksub_status\` varchar(32) NULL`,
         );
       }
-      if (!(await queryRunner.hasColumn('conversion_postbacks', 'delayed_checksub_scheduled_at'))) {
+      if (
+        !(await queryRunner.hasColumn(
+          'conversion_postbacks',
+          'delayed_checksub_scheduled_at',
+        ))
+      ) {
         await queryRunner.query(
           `ALTER TABLE \`conversion_postbacks\` ADD COLUMN \`delayed_checksub_scheduled_at\` timestamp NULL`,
         );
       }
-      if (!(await queryRunner.hasColumn('conversion_postbacks', 'delayed_checksub_executed_at'))) {
+      if (
+        !(await queryRunner.hasColumn(
+          'conversion_postbacks',
+          'delayed_checksub_executed_at',
+        ))
+      ) {
         await queryRunner.query(
           `ALTER TABLE \`conversion_postbacks\` ADD COLUMN \`delayed_checksub_executed_at\` timestamp NULL`,
         );
       }
-      if (!(await queryRunner.hasColumn('conversion_postbacks', 'delayed_checksub_outcome'))) {
+      if (
+        !(await queryRunner.hasColumn(
+          'conversion_postbacks',
+          'delayed_checksub_outcome',
+        ))
+      ) {
         await queryRunner.query(
           `ALTER TABLE \`conversion_postbacks\` ADD COLUMN \`delayed_checksub_outcome\` varchar(64) NULL`,
         );
       }
-      if (!(await queryRunner.hasColumn('conversion_postbacks', 'delayed_checksub_response'))) {
+      if (
+        !(await queryRunner.hasColumn(
+          'conversion_postbacks',
+          'delayed_checksub_response',
+        ))
+      ) {
         await queryRunner.query(
           `ALTER TABLE \`conversion_postbacks\` ADD COLUMN \`delayed_checksub_response\` text NULL`,
         );

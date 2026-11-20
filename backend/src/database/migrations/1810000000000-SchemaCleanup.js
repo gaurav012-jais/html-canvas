@@ -13,7 +13,11 @@ export class SchemaCleanup1810000000000 {
       await queryRunner.query(sql);
     } catch (err) {
       // Idempotent cleanup — ignore "already gone" style errors
-      if (!/does not exist|unknown column|Duplicate|already exists/i.test(err.message)) {
+      if (
+        !/does not exist|unknown column|Duplicate|already exists/i.test(
+          err.message,
+        )
+      ) {
         throw err;
       }
     }
@@ -27,10 +31,14 @@ export class SchemaCleanup1810000000000 {
       // await this.safeQuery(queryRunner, `DROP TABLE IF EXISTS "otp_requests" CASCADE`);
 
       if (await queryRunner.hasColumn('api_configs', 'user_api')) {
-        await queryRunner.query(`ALTER TABLE "api_configs" DROP COLUMN "user_api"`);
+        await queryRunner.query(
+          `ALTER TABLE "api_configs" DROP COLUMN "user_api"`,
+        );
       }
       if (await queryRunner.hasColumn('api_configs', 'otp_provider')) {
-        await queryRunner.query(`ALTER TABLE "api_configs" DROP COLUMN "otp_provider"`);
+        await queryRunner.query(
+          `ALTER TABLE "api_configs" DROP COLUMN "otp_provider"`,
+        );
       }
 
       await queryRunner.query(`
@@ -76,10 +84,14 @@ export class SchemaCleanup1810000000000 {
       // await this.safeQuery(queryRunner, `DROP TABLE IF EXISTS \`otp_requests\``);
 
       if (await queryRunner.hasColumn('api_configs', 'user_api')) {
-        await queryRunner.query(`ALTER TABLE \`api_configs\` DROP COLUMN \`user_api\``);
+        await queryRunner.query(
+          `ALTER TABLE \`api_configs\` DROP COLUMN \`user_api\``,
+        );
       }
       if (await queryRunner.hasColumn('api_configs', 'otp_provider')) {
-        await queryRunner.query(`ALTER TABLE \`api_configs\` DROP COLUMN \`otp_provider\``);
+        await queryRunner.query(
+          `ALTER TABLE \`api_configs\` DROP COLUMN \`otp_provider\``,
+        );
       }
 
       await queryRunner.query(`
@@ -99,6 +111,8 @@ export class SchemaCleanup1810000000000 {
 
   async down(queryRunner) {
     // Disabled down migration to protect tables from accidental drop/data loss
-    throw new Error('Down migrations are disabled to prevent accidental table drops.');
+    throw new Error(
+      'Down migrations are disabled to prevent accidental table drops.',
+    );
   }
 }

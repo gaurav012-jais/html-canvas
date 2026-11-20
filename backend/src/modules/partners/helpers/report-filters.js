@@ -47,7 +47,8 @@ export function parseReportQuery(query = {}) {
     view: REPORT_VIEWS.has(view) ? view : '',
     page,
     limit,
-    writeFile: String(query.writeFile || '') === '1' || query.writeFile === true,
+    writeFile:
+      String(query.writeFile || '') === '1' || query.writeFile === true,
   };
 }
 
@@ -59,19 +60,32 @@ function haystackOf(parts) {
 }
 
 export function matchesNumberFilters(row, filters = {}) {
-  if (filters.campaignId && Number(row.campaignId) !== Number(filters.campaignId)) {
+  if (
+    filters.campaignId &&
+    Number(row.campaignId) !== Number(filters.campaignId)
+  ) {
     return false;
   }
   if (filters.vendorId && Number(row.vendorId) !== Number(filters.vendorId)) {
     return false;
   }
-  if (filters.offerCode && String(row.offerCode || '').toLowerCase() !== String(filters.offerCode).toLowerCase()) {
+  if (
+    filters.offerCode &&
+    String(row.offerCode || '').toLowerCase() !==
+      String(filters.offerCode).toLowerCase()
+  ) {
     return false;
   }
-  if (filters.outcome && filters.outcome !== 'all' && row.outcome !== filters.outcome) {
+  if (
+    filters.outcome &&
+    filters.outcome !== 'all' &&
+    row.outcome !== filters.outcome
+  ) {
     return false;
   }
-  const needle = String(filters.q || '').trim().toLowerCase();
+  const needle = String(filters.q || '')
+    .trim()
+    .toLowerCase();
   if (!needle) return true;
   return haystackOf([
     row.msisdn,
@@ -92,17 +106,26 @@ export function matchesNumberFilters(row, filters = {}) {
 }
 
 export function matchesHitFilters(hit, filters = {}) {
-  if (filters.campaignId && Number(hit.campaignId) !== Number(filters.campaignId)) {
+  if (
+    filters.campaignId &&
+    Number(hit.campaignId) !== Number(filters.campaignId)
+  ) {
     return false;
   }
   if (filters.vendorId && Number(hit.vendorId) !== Number(filters.vendorId)) {
     return false;
   }
   const hitType = filters.hitType || 'all';
-  if (hitType === 'billing_callback' && hit.callType !== ApiCallType.BILLING_CALLBACK) {
+  if (
+    hitType === 'billing_callback' &&
+    hit.callType !== ApiCallType.BILLING_CALLBACK
+  ) {
     return false;
   }
-  if (hitType === 'vendor_postback' && hit.callType !== ApiCallType.VENDOR_POSTBACK) {
+  if (
+    hitType === 'vendor_postback' &&
+    hit.callType !== ApiCallType.VENDOR_POSTBACK
+  ) {
     return false;
   }
   if (hitType === 'ok' && (hit.ok !== true || hit.unmatched)) return false;
@@ -110,7 +133,9 @@ export function matchesHitFilters(hit, filters = {}) {
   if (hitType === 'unmatched' && !hit.unmatched) return false;
   if (hitType === 'with_msisdn' && !hit.msisdnReceived) return false;
   if (hitType === 'without_msisdn' && hit.msisdnReceived) return false;
-  const needle = String(filters.q || '').trim().toLowerCase();
+  const needle = String(filters.q || '')
+    .trim()
+    .toLowerCase();
   if (!needle) return true;
   return haystackOf([
     hit.msisdn,

@@ -33,10 +33,12 @@ export const reserveOtpSend = async (client, phone, config = {}) => {
     if (!client) throw new Error('Redis unavailable');
     result = await client.eval(RESERVE_SEND, 1, `otp:send-limit:${msisdn}`);
   } catch {
-    const err = new Error(configuredMessage(
-      config.otpUnavailableMessage,
-      'OTP sending is temporarily unavailable. Please try again later.',
-    ));
+    const err = new Error(
+      configuredMessage(
+        config.otpUnavailableMessage,
+        'OTP sending is temporarily unavailable. Please try again later.',
+      ),
+    );
     err.statusCode = 503;
     throw err;
   }
@@ -44,7 +46,9 @@ export const reserveOtpSend = async (client, phone, config = {}) => {
   if (Number(result[0]) !== 1) {
     const seconds = Math.ceil(Number(result[1]) / 1000);
     const message = configuredMessage(
-      result[2] === 'blocked' ? config.otpBlockedMessage : config.otpCooldownMessage,
+      result[2] === 'blocked'
+        ? config.otpBlockedMessage
+        : config.otpCooldownMessage,
       result[2] === 'blocked'
         ? 'OTP send limit reached. Please try again in {{seconds}} seconds.'
         : 'Please wait {{seconds}} seconds before requesting another OTP.',

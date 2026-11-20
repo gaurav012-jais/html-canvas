@@ -41,10 +41,11 @@ const mapSubServiceId = (pack) => {
 
 /** Tick defaults: responseCode === "0" means success. Overridable via config. */
 export const getSuccessRule = (config) => ({
-  key: String(config?.successKey || config?.success_key || 'responseCode').trim() || 'responseCode',
-  value: String(
-    config?.successValue ?? config?.success_value ?? '0',
-  ).trim(),
+  key:
+    String(
+      config?.successKey || config?.success_key || 'responseCode',
+    ).trim() || 'responseCode',
+  value: String(config?.successValue ?? config?.success_value ?? '0').trim(),
 });
 
 const getFieldValue = (data, key) => {
@@ -97,7 +98,8 @@ const formatPartnerError = (data, config, fallback) => {
   const code = getBusinessCode(data, config);
   const { key, value } = getSuccessRule(config);
   const mapped = code ? PARTNER_RESPONSE_MESSAGES[code] : null;
-  const apiMsg = data?.responseMessage || data?.response_message || data?.message;
+  const apiMsg =
+    data?.responseMessage || data?.response_message || data?.message;
   if (mapped && code !== value) {
     return mapped;
   }
@@ -162,7 +164,11 @@ export const partnerProvider = {
         ? JSON.stringify(bodyTemplate)
         : String(bodyTemplate || '');
     const resolvedBodyStr = resolveTemplate(rawBodyStr, templateVariables);
-    const meta = { requestUrl: resolvedUrl, requestBody: resolvedBodyStr || null, otp };
+    const meta = {
+      requestUrl: resolvedUrl,
+      requestBody: resolvedBodyStr || null,
+      otp,
+    };
 
     await reserveOtpSend(redisService.getClient(), phone, config);
 
@@ -323,7 +329,11 @@ export const partnerProvider = {
         ? JSON.stringify(bodyTemplate)
         : String(bodyTemplate || '');
     const resolvedBodyStr = resolveTemplate(rawBodyStr, templateVariables);
-    const meta = { requestUrl: resolvedUrl, requestBody: resolvedBodyStr || null, otp };
+    const meta = {
+      requestUrl: resolvedUrl,
+      requestBody: resolvedBodyStr || null,
+      otp,
+    };
 
     try {
       let response;

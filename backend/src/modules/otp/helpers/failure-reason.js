@@ -19,13 +19,11 @@ export function normalizeFailureReason(meta = {}, eventType = 'OTP_VERIFY') {
     meta.error || meta.errorMessage || meta.message || '',
   ).trim();
   const codeStr = String(
-    meta.code ||
-      meta.responseCode ||
-      meta.status ||
-      meta.statusLabel ||
-      '',
+    meta.code || meta.responseCode || meta.status || meta.statusLabel || '',
   ).trim();
-  const clientResponse = String(meta.clientResponse || '').trim().toLowerCase();
+  const clientResponse = String(meta.clientResponse || '')
+    .trim()
+    .toLowerCase();
   const httpStatus = Number(meta.httpStatus || meta.responseStatus || 0);
   const combined = `${errStr} ${codeStr} ${clientResponse}`.toLowerCase();
 
@@ -112,7 +110,11 @@ export function normalizeFailureReason(meta = {}, eventType = 'OTP_VERIFY') {
 
   // 7. General HTTP 400/404 invalid request
   if (httpStatus === 400 || httpStatus === 404) {
-    if (/not found/i.test(combined) || /missing/i.test(combined) || /required/i.test(combined)) {
+    if (
+      /not found/i.test(combined) ||
+      /missing/i.test(combined) ||
+      /required/i.test(combined)
+    ) {
       return 'Invalid Request';
     }
   }

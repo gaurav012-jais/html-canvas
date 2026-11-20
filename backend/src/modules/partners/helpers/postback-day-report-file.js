@@ -34,7 +34,12 @@ export function resolvePostbackLogsDir() {
 }
 
 /** Writes the greppable log onto the API host. Overwrites the same range file. */
-export async function writeDayReportFile(text, range, dirOverride, ext = 'txt') {
+export async function writeDayReportFile(
+  text,
+  range,
+  dirOverride,
+  ext = 'txt',
+) {
   const from = typeof range === 'string' ? range : range?.from;
   const to = typeof range === 'string' ? range : range?.to;
   const dir = dirOverride || resolvePostbackLogsDir();
@@ -70,7 +75,11 @@ export async function appendPostbackHit(input, dirOverride) {
   await mkdir(dir, { recursive: true });
   const filename = hitLogFilename(day);
   const absolutePath = join(dir, filename);
-  await appendFile(absolutePath, `${formatHitLogLine(hit, timezone)}\n`, 'utf8');
+  await appendFile(
+    absolutePath,
+    `${formatHitLogLine(hit, timezone)}\n`,
+    'utf8',
+  );
   return {
     filename,
     absolutePath,

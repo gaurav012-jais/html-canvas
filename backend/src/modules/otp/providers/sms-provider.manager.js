@@ -43,7 +43,8 @@ export const createSmsProviderManager = () => {
   const getProviderByName = () => partnerProvider;
 
   const getProvider = (apiConfig) => {
-    const { providerName, providerConfig } = resolveOtpProviderConfig(apiConfig);
+    const { providerName, providerConfig } =
+      resolveOtpProviderConfig(apiConfig);
     return {
       providerName,
       providerConfig,
@@ -52,7 +53,12 @@ export const createSmsProviderManager = () => {
     };
   };
 
-  return { getProvider, getProviderByName, resolveOtpProviderConfig, usesRemoteVerify };
+  return {
+    getProvider,
+    getProviderByName,
+    resolveOtpProviderConfig,
+    usesRemoteVerify,
+  };
 };
 
 export const smsProviderManager = createSmsProviderManager();

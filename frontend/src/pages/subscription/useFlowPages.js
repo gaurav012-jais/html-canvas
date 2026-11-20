@@ -1,13 +1,13 @@
-import { useCallback, useEffect, useRef } from 'react'
-import { fetchFlowEntry, fetchFlowPage, prefetchFlowPage } from '../../services/api/flow'
-import { persistPhone, pickHeFailRedirectUrl } from '../../services/flow/resolvePhoneNumber'
-import { trackEvent } from '../../utils/analytics'
-import { trackGoogleAdsConversion } from '../../utils/googleAds'
-import { FLOW_FONT, FLOW_PAGE_CACHE_ENABLED, PRELOAD_BY_PAGE } from './constants'
-import { isHeSuppressedFunnelPage, isExternalHttpRedirect, normalizeDetectNextPage, shouldTreatCgAsHeFailRedirect } from './flowHelpers'
+import { useCallback, useRef } from 'react'
+import { persistPhone } from '../../services/flow/resolvePhoneNumber'
+import { isHeSuppressedFunnelPage, isExternalHttpRedirect } from './flowHelpers'
+import { usePageCache } from './usePageCache'
+import { useUrlSync } from './useUrlSync'
+import { useFlowBoot } from './useFlowBoot'
 
 /**
  * Page load/cache/prefetch, boot, URL step sync, and redirect side-effects.
+ * Composes specialized hooks: usePageCache, useUrlSync, and useFlowBoot.
  */
 function useFlowPages({
   country,
@@ -48,14 +48,10 @@ function useFlowPages({
   loadPageRef,
   transitionLockRef,
 }) {
-  // cachePage writes ?step= after paint; keep this so the URL-sync effect
-  // does not reload the previous step (Save & preview always has step=HOME).
   const appStepRef = useRef(null)
 
   const cachePage = useCallback(
     (data) => {
-      // CG / partner leave: keep the current (mobile) HTML on screen until navigation.
-      // Transition payloads omit deviceLayouts, so painting them flashes the laptop HTML.
       const leaveUrl = String(data?.externalRedirect || '').trim()
       if (isExternalHttpRedirect(leaveUrl) || leaveUrl.startsWith('/subscription')) {
         if (data.visitId) visitIdRef.current = data.visitId
@@ -71,7 +67,6 @@ function useFlowPages({
         return
       }
 
-      // Immediate portal redirect: leave before painting thank-you (or any page with resolved URL).
       const mode = String(data.successRedirectMode || 'thankyou').toLowerCase()
       const dest = String(data.successRedirect || '').trim()
       if (
@@ -92,7 +87,6 @@ function useFlowPages({
       appStepRef.current = String(data.pageType || '').toUpperCase()
       setPageData(data)
 
-      // Backend dual IDs: our clickId + affiliate rcid (stable for the visit).
       if (data.clickId) clickIdRef.current = String(data.clickId)
       if (data.rcid) rcidRef.current = String(data.rcid)
 
@@ -103,7 +97,6 @@ function useFlowPages({
         persistPhone(resolvedPhone)
       }
 
-      // Save session in sessionStorage
       const isVerified = data.pageType === 'CONFIRM' || data.pageType === 'THANKYOU' || data.verified === true
       saveSession({
         verificationStatus: isVerified ? 'verified' : 'unverified',
@@ -119,7 +112,6 @@ function useFlowPages({
         msisdnSource: data.flowContext?.msisdnSource || undefined,
       })
 
-      // Sync URL step + msisdn + dual click attribution params.
       setSearchParams(
         (prev) => {
           const nextParams = new URLSearchParams(prev)
@@ -167,269 +159,67 @@ function useFlowPages({
         { replace: true }
       )
     },
-    [saveSession, setSearchParams]
+    [saveSession, setSearchParams, visitIdRef, clickIdRef, rcidRef, heOnlyModeRef, entryPageRef, pageCacheRef, pageDataRef, setPageData, phoneRef, setPhone, vidRef, affIdRef, campidRef, trackingCampidRef]
   )
 
-  // Null-flow CG: backend sends externalRedirect with click_id → leave immediately
-  useEffect(() => {
-    const dest = String(pageData?.externalRedirect || '').trim()
-    if (isExternalHttpRedirect(dest) || dest.startsWith('/subscription')) {
-      window.location.assign(dest)
-    }
-  }, [pageData?.externalRedirect])
+  const { loadPage } = useFlowBoot({
+    country,
+    operator,
+    campid,
+    trackingCampid,
+    vid,
+    affId,
+    cachePage,
+    setError,
+    setBooting,
+    setPageData,
+    setPhoneResolving,
+    phoneRef,
+    phoneResolvingRef,
+    visitIdRef,
+    entryPageRef,
+    pageCacheRef,
+    prefetchingRef,
+    pageDataRef,
+    selectedPackRef,
+    heOnlyModeRef,
+    heDetectSettledRef,
+    heExitPendingRef,
+    heMetaRef,
+    loadGenerationRef,
+    clickIdRef,
+    rcidRef,
+    loadPageRef,
+  })
 
-  // THANKYOU → optional success/content portal
-  // thankyou mode: show page ~2s then redirect; immediate handled in cachePage
-  useEffect(() => {
-    if (String(pageData?.pageType || '').toUpperCase() !== 'THANKYOU') return undefined
-    if (String(pageData?.successRedirectMode || 'thankyou').toLowerCase() === 'immediate') {
-      return undefined
-    }
-    const dest = String(pageData?.successRedirect || pageData?.successRedirectUrl || '').trim()
-    if (!dest || !/^https?:\/\//i.test(dest)) return undefined
-    const timer = window.setTimeout(() => {
-      window.location.assign(dest)
-    }, 2000)
-    return () => window.clearTimeout(timer)
-  }, [pageData?.pageType, pageData?.successRedirect, pageData?.successRedirectUrl, pageData?.successRedirectMode])
+  usePageCache({
+    country,
+    operator,
+    campid,
+    trackingCampid,
+    vid,
+    affId,
+    phoneRef,
+    visitIdRef,
+    clickIdRef,
+    rcidRef,
+    pageCacheRef,
+    prefetchingRef,
+    pageData,
+  })
 
-  const prefetchPages = useCallback(
-    async (pages, visitId) => {
-      if (!FLOW_PAGE_CACHE_ENABLED) return
-      if (!country || !operator || !visitId) return
-      await Promise.all(
-        pages.map(async (page) => {
-          if (pageCacheRef.current.has(page) || prefetchingRef.current.has(page)) return
-          prefetchingRef.current.add(page)
-          const data = await prefetchFlowPage({
-            country,
-            operator,
-            page,
-            msisdn: phoneRef.current,
-            visitId,
-            campid,
-            trackingCampid,
-            vid,
-            affId,
-            clickId: clickIdRef.current || undefined,
-            rcid: rcidRef.current || undefined,
-          })
-          prefetchingRef.current.delete(page)
-          // Only cache if backend returned the page we asked for (guards may rewrite CONFIRM→OTP).
-          if (data?.pageType === page) {
-            pageCacheRef.current.set(page, data)
-          } else if (data?.pageType && !pageCacheRef.current.has(data.pageType)) {
-            pageCacheRef.current.set(data.pageType, data)
-          }
-        })
-      )
-    },
-    [country, operator, campid, trackingCampid, vid, affId]
-  )
-
-  const loadPage = useCallback(
-    async (page = 'HOME', options = {}) => {
-      const requested =
-        String(page || 'HOME')
-          .trim()
-          .toUpperCase() || 'HOME'
-      if (!country || !operator) {
-        setError('Missing country or operator in URL')
-        setBooting(false)
-        return
-      }
-      if (heOnlyModeRef.current && isHeSuppressedFunnelPage(requested)) {
-        console.log('[HE] suppressing funnel page load:', requested)
-        phoneResolvingRef.current = true
-        setPhoneResolving(true)
-        setBooting(false)
-        return
-      }
-      setError('')
-      const generation = ++loadGenerationRef.current
-
-      // Direct page-link navigations must not reuse a guarded/prefetch rewrite cache.
-      if (FLOW_PAGE_CACHE_ENABLED && !options.direct && pageCacheRef.current.has(requested)) {
-        const cachedData = pageCacheRef.current.get(requested)
-        if (generation !== loadGenerationRef.current) return
-        pageDataRef.current = cachedData
-        setPageData(cachedData)
-        setBooting(false)
-        return
-      }
-
-      try {
-        const data = await fetchFlowPage({
-          country,
-          operator,
-          page: requested,
-          msisdn: phoneRef.current,
-          visitId: visitIdRef.current,
-          campid,
-          trackingCampid,
-          vid,
-          affId,
-          clickId: clickIdRef.current || undefined,
-          rcid: rcidRef.current || undefined,
-          direct: Boolean(options.direct),
-        })
-        if (generation !== loadGenerationRef.current) return
-        // Backend may rewrite requested page (e.g. CONFIRM → OTP) unless direct=1.
-        cachePage(data)
-      } catch (err) {
-        if (generation !== loadGenerationRef.current) return
-        setError(err.message || 'Failed to load page')
-      } finally {
-        if (generation === loadGenerationRef.current) {
-          setBooting(false)
-        }
-      }
-    },
-    [country, operator, cachePage, campid, trackingCampid, vid, affId, setPhoneResolving]
-  )
-
-  useEffect(() => {
-    loadPageRef.current = loadPage
-  }, [loadPage])
-
-  useEffect(() => {
-    const existing = document.querySelector('link[data-flow-font]')
-    if (!existing) {
-      const link = document.createElement('link')
-      link.rel = 'stylesheet'
-      link.href = FLOW_FONT
-      link.dataset.flowFont = 'true'
-      document.head.appendChild(link)
-    }
-  }, [])
-
-  // Fresh landing: wait for HE detect before HOME so fail/success redirects never flash HOME.
-  // Do NOT depend on searchParams — cachePage updates step/msisdn and would re-boot in a loop.
-  useEffect(() => {
-    if ((!country || !operator) && !campid && !trackingCampid) return undefined
-    let cancelled = false
-
-    async function waitForHeDetect(maxMs = 12000) {
-      const start = Date.now()
-      while (!heDetectSettledRef.current && Date.now() - start < maxMs) {
-        if (cancelled || heExitPendingRef.current) return false
-        await new Promise((resolve) => {
-          window.setTimeout(resolve, 40)
-        })
-      }
-      return heDetectSettledRef.current
-    }
-
-    async function boot() {
-      const landingParams = new URLSearchParams(window.location.search)
-      const urlStep = landingParams.get('step')
-      // Editor "open this page" adds _t. Live funnel also writes ?step=OTP&msisdn=
-      // after the first OTP — that bookmark must not skip CONFIRM on refresh
-      // or when the same (or another) number is entered again.
-      const explicitPagePreview = Boolean(urlStep) && landingParams.has('_t')
-
-      if (explicitPagePreview) {
-        setBooting(true)
-        if (isHeSuppressedFunnelPage(urlStep)) {
-          await waitForHeDetect()
-          if (cancelled || heExitPendingRef.current || heOnlyModeRef.current) return
-        }
-        if (!cancelled) await loadPageRef.current?.(urlStep)
-        return
-      }
-
-      selectedPackRef.current = 'daily'
-      pageCacheRef.current.clear()
-      prefetchingRef.current.clear()
-      // Do not clear visitIdRef — detect-msisdn may have already created the visit.
-      pageDataRef.current = null
-      setPageData(null)
-      setBooting(true)
-
-      // API HE may redirect away — do not paint HOME until detect settles.
-      await waitForHeDetect()
-      if (cancelled || heExitPendingRef.current) return
-      const meta = heMetaRef.current
-      const detectPage = normalizeDetectNextPage(meta.nextPage)
-      if (
-        !phoneRef.current &&
-        detectPage !== 'OTP' &&
-        pickHeFailRedirectUrl({
-          failRedirectUrl: meta.failRedirectUrl,
-          cgRedirectUrl: shouldTreatCgAsHeFailRedirect(meta.verificationMode)
-            ? meta.cgRedirectUrl
-            : '',
-        })
-      ) {
-        return
-      }
-      if (heOnlyModeRef.current) return
-
-      try {
-        if (detectPage) {
-          entryPageRef.current = detectPage
-          await loadPageRef.current?.(detectPage)
-          return
-        }
-        const { entryPage } = await fetchFlowEntry({ country, operator, campid, trackingCampid })
-        if (cancelled || heExitPendingRef.current || heOnlyModeRef.current) return
-        entryPageRef.current = entryPage || 'HOME'
-        await loadPageRef.current?.(entryPageRef.current)
-      } catch {
-        if (!cancelled && !heExitPendingRef.current && !heOnlyModeRef.current) {
-          await loadPageRef.current?.(detectPage || 'HOME')
-        }
-      }
-    }
-
-    boot()
-    return () => {
-      cancelled = true
-    }
-    // loadPage identity changes when the URL gains click_id / step. Depending on
-    // it restarts boot, clears the page, and the screen flashes then stays blank.
-  }, [country, operator, campid, trackingCampid])
-
-  // Sync step changes from browser history / page-link navigation.
-  const urlStep = (searchParams.get('step') || '').toUpperCase()
-  useEffect(() => {
-    if (booting || !pageData) return
-    if (!urlStep) return
-    const pageType = String(pageData.pageType || '').toUpperCase()
-    if (pageType === urlStep) {
-      if (appStepRef.current === urlStep) appStepRef.current = null
-      return
-    }
-    if (heOnlyModeRef.current && isHeSuppressedFunnelPage(urlStep)) return
-    // Ignore while a transition is in flight — cachePage will align URL + page together.
-    if (transitionLockRef.current) return
-    // Stale ?step= from editor preview (HOME) must not overwrite a CTA result.
-    if (appStepRef.current && appStepRef.current !== urlStep) return
-    setBooting(true)
-    loadPage(urlStep)
-  }, [urlStep, booting, pageData, loadPage])
-
-  // Track Page Views
-  useEffect(() => {
-    if (!pageData?.pageType) return
-    if (pageData.pageType === 'CONFIRM') {
-      trackEvent('confirm_loaded')
-    } else if (pageData.pageType === 'THANKYOU') {
-      trackEvent('success_loaded')
-      trackGoogleAdsConversion({
-        transactionId: visitIdRef?.current || searchParams?.get('rcid') || searchParams?.get('click_id') || '',
-        value: selectedPackRef?.current?.price ?? 1.0,
-        currency: 'INR',
-        isPreview: Boolean(searchParams?.get('_t') || searchParams?.get('preview')),
-      })
-    }
-  }, [pageData?.pageType, searchParams, selectedPackRef, visitIdRef])
-
-  useEffect(() => {
-    if (!pageData?.pageType || !visitIdRef.current) return
-    const nextPages = PRELOAD_BY_PAGE[pageData.pageType] || []
-    if (nextPages.length) prefetchPages(nextPages, visitIdRef.current)
-  }, [pageData?.pageType, prefetchPages])
+  useUrlSync({
+    pageData,
+    searchParams,
+    booting,
+    loadPage,
+    appStepRef,
+    heOnlyModeRef,
+    transitionLockRef,
+    setBooting,
+    visitIdRef,
+    selectedPackRef,
+  })
 
   return { cachePage, loadPage }
 }

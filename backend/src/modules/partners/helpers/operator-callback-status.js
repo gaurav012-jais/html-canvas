@@ -18,7 +18,9 @@ export const parseOperatorStatus = (query = {}) => {
 export const parseAllowedStatuses = (config) => {
   if (!config) return null;
   if (Array.isArray(config)) {
-    const list = config.map((s) => String(s).trim().toLowerCase()).filter(Boolean);
+    const list = config
+      .map((s) => String(s).trim().toLowerCase())
+      .filter(Boolean);
     return list.length ? new Set(list) : null;
   }
   if (typeof config === 'string') {
@@ -31,7 +33,10 @@ export const parseAllowedStatuses = (config) => {
   return null;
 };
 
-export const shouldFireVendorPostback = (status, customAllowedConfig = null) => {
+export const shouldFireVendorPostback = (
+  status,
+  customAllowedConfig = null,
+) => {
   const normalized = String(status || '').toLowerCase();
   const customSet = parseAllowedStatuses(customAllowedConfig);
   if (customSet) {
@@ -54,7 +59,10 @@ export const describeVendorFireDecision = (
   status,
   customAllowedConfig = null,
 ) => {
-  const received = String(status || '').trim().toLowerCase() || '(empty)';
+  const received =
+    String(status || '')
+      .trim()
+      .toLowerCase() || '(empty)';
   const allowedLabel = allowedStatusesLabel(customAllowedConfig);
   const shouldFire = shouldFireVendorPostback(status, customAllowedConfig);
   const info = shouldFire
@@ -62,4 +70,3 @@ export const describeVendorFireDecision = (
     : `Vendor postback not sent because received status "${received}" is not in allowed statuses [${allowedLabel}].`;
   return { shouldFire, received, allowedLabel, info };
 };
-

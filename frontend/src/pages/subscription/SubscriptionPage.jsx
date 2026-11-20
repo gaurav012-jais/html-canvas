@@ -5,7 +5,7 @@
  * useShadowInteractions for button clicks (Layer B via /transition, or Layer C
  * canvas jumps / Priority Chain). File map: docs/FLOW-ARCHITECTURE.md §0–§8.
  */
-import { memo, useRef, useState } from 'react'
+import { memo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import SubscriptionOverlays from './SubscriptionOverlays'
 import { isHeSuppressedFunnelPage } from './flowHelpers'
@@ -14,6 +14,7 @@ import { useFlowSession } from './useFlowSession'
 import { useDcbStatusPoll } from './useDcbStatusPoll'
 import { useHeDetect } from './useHeDetect'
 import { useShadowInteractions } from './useShadowInteractions'
+import { useFlowState } from './useFlowState'
 import { filledTrackingValue } from '../../services/flow/trackingMacros'
 
 function deriveOverlayFlags({ phoneResolving, heExitPending, heFunnelSuppressed, pageData, booting, error }) {
@@ -67,44 +68,41 @@ function SubscriptionPage() {
   const [error, setError] = useState('')
   const [pageData, setPageData] = useState(null)
 
-  const hostRef = useRef(null)
-  const visitIdRef = useRef(null)
-  const entryPageRef = useRef('HOME')
-  const pageCacheRef = useRef(new Map())
-  const prefetchingRef = useRef(new Set())
-  const transitionLockRef = useRef(false)
-  const pageDataRef = useRef(null)
-  const selectedPackRef = useRef('daily')
-  const phoneRef = useRef('')
-  const phoneResolvingRef = useRef(true)
-  const heExitPendingRef = useRef(false)
-  const heMetaRef = useRef({
-    done: false,
-    heProvider: null,
-    heError: null,
-    failRedirectUrl: null,
-    successRedirectUrl: null,
-    cgRedirectUrl: null,
-    nextPage: null,
-    blocked: false,
-    blockReason: null,
-    subscriptionStatus: null,
-    isActive: false,
-    verificationMode: null,
+  const flowState = useFlowState({
+    urlRcid,
+    urlClickId,
+    vid,
+    affId,
+    campid,
+    trackingCampid,
   })
-  const loadPageRef = useRef(null)
-  const detectKeyRef = useRef('')
-  const detectInFlightRef = useRef(false)
-  const heDetectSettledRef = useRef(false)
-  const heOnlyModeRef = useRef(false)
-  const loadGenerationRef = useRef(0)
-  // Our click_id is empty until detect-msisdn /flow/page returns it; affiliate seed goes in rcid.
-  const clickIdRef = useRef('')
-  const rcidRef = useRef(urlRcid || urlClickId || '')
-  const vidRef = useRef(vid)
-  const affIdRef = useRef(affId)
-  const campidRef = useRef(campid)
-  const trackingCampidRef = useRef(trackingCampid)
+
+  const {
+    hostRef,
+    visitIdRef,
+    entryPageRef,
+    pageCacheRef,
+    prefetchingRef,
+    transitionLockRef,
+    pageDataRef,
+    selectedPackRef,
+    phoneRef,
+    phoneResolvingRef,
+    heExitPendingRef,
+    heMetaRef,
+    loadPageRef,
+    detectKeyRef,
+    detectInFlightRef,
+    heDetectSettledRef,
+    heOnlyModeRef,
+    loadGenerationRef,
+    clickIdRef,
+    rcidRef,
+    vidRef,
+    affIdRef,
+    campidRef,
+    trackingCampidRef,
+  } = flowState
 
   const { getSavedSession, saveSession } = useFlowSession({
     country,

@@ -8,12 +8,16 @@ export class AddSuccessRedirectMode1880000000000 {
     const isPostgres = queryRunner.connection.options.type === 'postgres';
 
     if (isPostgres) {
-      if (!(await queryRunner.hasColumn('campaigns', 'success_redirect_mode'))) {
+      if (
+        !(await queryRunner.hasColumn('campaigns', 'success_redirect_mode'))
+      ) {
         await queryRunner.query(
           `ALTER TABLE "campaigns" ADD COLUMN "success_redirect_mode" varchar(16) NOT NULL DEFAULT 'thankyou'`,
         );
       }
-    } else if (!(await queryRunner.hasColumn('campaigns', 'success_redirect_mode'))) {
+    } else if (
+      !(await queryRunner.hasColumn('campaigns', 'success_redirect_mode'))
+    ) {
       await queryRunner.query(
         `ALTER TABLE \`campaigns\` ADD COLUMN \`success_redirect_mode\` varchar(16) NOT NULL DEFAULT 'thankyou'`,
       );

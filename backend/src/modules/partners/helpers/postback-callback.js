@@ -2,9 +2,7 @@ import { getRepository } from '../../../database/index.js';
 import { Vendor } from '../../../database/entities/vendor.entity.js';
 import { Campaign } from '../../../database/entities/campaign.entity.js';
 import { CampaignTracking } from '../../../database/entities/campaign-tracking.entity.js';
-import {
-  ConversionPostbackStatus,
-} from '../../../database/entities/conversion-postback.entity.js';
+import { ConversionPostbackStatus } from '../../../database/entities/conversion-postback.entity.js';
 import { VisitEventType } from '../../../database/entities/visit-event.entity.js';
 import { ApiCallType } from '../../../database/entities/api-call-log.entity.js';
 import { appendPostbackHitSafe } from './postback-day-report-file.js';
@@ -28,17 +26,14 @@ const serializeBody = (data) => {
 };
 
 const callAnalytics = async (method, ...args) => {
-  const { analyticsService } = await import('../../analytics/analytics.service.js');
+  const { analyticsService } =
+    await import('../../analytics/analytics.service.js');
   return analyticsService[method](...args);
 };
 
 export const parseCallbackClickId = (query = {}) =>
   String(
-    query.click_id ||
-      query.clickId ||
-      query.ext_id ||
-      query.extId ||
-      '',
+    query.click_id || query.clickId || query.ext_id || query.extId || '',
   ).trim();
 
 export const parseCallbackMsisdn = (query = {}) =>
@@ -189,26 +184,33 @@ export const createPostbackCallback = (deps) => {
           status,
           query: safeQuery,
           ...extra,
-          info: heldCall
-            ? extra.info || skipInfo
-            : extra.info,
+          info: heldCall ? extra.info || skipInfo : extra.info,
           reason: heldCall ? extra.info || skipInfo : extra.reason,
         }),
         responseStatus: 200,
         responseBody: null,
         success: matched,
         statusLabel: matched
-          ? String(status || 'RECEIVED').toUpperCase().slice(0, 32)
+          ? String(status || 'RECEIVED')
+              .toUpperCase()
+              .slice(0, 32)
           : 'UNMATCHED',
       });
     };
 
     const reject = async (reason) => {
-      await logInbound(null, null, clickId || null, null, incomingMsisdn || null, {
-        action: 'unmatched',
-        reason,
-        matched: false,
-      });
+      await logInbound(
+        null,
+        null,
+        clickId || null,
+        null,
+        incomingMsisdn || null,
+        {
+          action: 'unmatched',
+          reason,
+          matched: false,
+        },
+      );
       return { success: false, skipped: true, reason };
     };
 
@@ -222,7 +224,10 @@ export const createPostbackCallback = (deps) => {
           const repo = deps.getTrackingRepo();
           if (repo?.findOne) {
             const tracking = await repo.findOne({
-              where: { campaignId: parseInt(campaignId, 10), vendorId: parseInt(vendorId, 10) },
+              where: {
+                campaignId: parseInt(campaignId, 10),
+                vendorId: parseInt(vendorId, 10),
+              },
             });
             if (tracking?.allowedCallbackStatuses?.trim()) {
               return tracking.allowedCallbackStatuses.trim();
@@ -232,7 +237,9 @@ export const createPostbackCallback = (deps) => {
         if (vendorId && deps.getVendorRepo) {
           const repo = deps.getVendorRepo();
           if (repo?.findOne) {
-            const vendor = await repo.findOne({ where: { id: parseInt(vendorId, 10) } });
+            const vendor = await repo.findOne({
+              where: { id: parseInt(vendorId, 10) },
+            });
             if (vendor?.allowedCallbackStatuses?.trim()) {
               return vendor.allowedCallbackStatuses.trim();
             }
@@ -241,7 +248,9 @@ export const createPostbackCallback = (deps) => {
         if (campaignId && deps.getCampaignRepo) {
           const repo = deps.getCampaignRepo();
           if (repo?.findOne) {
-            const campaign = await repo.findOne({ where: { id: parseInt(campaignId, 10) } });
+            const campaign = await repo.findOne({
+              where: { id: parseInt(campaignId, 10) },
+            });
             if (campaign?.allowedCallbackStatuses?.trim()) {
               return campaign.allowedCallbackStatuses.trim();
             }
@@ -254,7 +263,10 @@ export const createPostbackCallback = (deps) => {
     };
 
     const firePending = async (pending, extra = {}) => {
-      const allowedStatuses = await resolveAllowedStatuses(pending.campaignId, pending.vendorId);
+      const allowedStatuses = await resolveAllowedStatuses(
+        pending.campaignId,
+        pending.vendorId,
+      );
       const decision = describeVendorFireDecision(status, allowedStatuses);
       const fireVendor = decision.shouldFire;
       pending.operatorStatus = status;
@@ -317,7 +329,10 @@ export const createPostbackCallback = (deps) => {
     };
 
     const registerAndFireFromVisit = async (visit, msisdn, extra = {}) => {
-      const allowedStatuses = await resolveAllowedStatuses(visit.campaignId, visit.vendorId);
+      const allowedStatuses = await resolveAllowedStatuses(
+        visit.campaignId,
+        visit.vendorId,
+      );
       const decision = describeVendorFireDecision(status, allowedStatuses);
       const fireVendor = decision.shouldFire;
       const digits = String(msisdn || '').replace(/\D/g, '') || '';
@@ -364,7 +379,12 @@ export const createPostbackCallback = (deps) => {
       }
       const id = registered.id;
       if (!id) {
-        return { success: false, skipped: true, reason: 'No pending callback', operatorStatus: status };
+        return {
+          success: false,
+          skipped: true,
+          reason: 'No pending callback',
+          operatorStatus: status,
+        };
       }
       if (!fireVendor) {
         return {
@@ -420,7 +440,9 @@ export const createPostbackCallback = (deps) => {
       }
 
       return reject(
-        clickId ? 'No visit for click_id and msisdn not in system' : 'msisdn not in system',
+        clickId
+          ? 'No visit for click_id and msisdn not in system'
+          : 'msisdn not in system',
       );
     }
 

@@ -12,11 +12,11 @@
     "start:prod": "node src/server.js",
     "db:tunnel": "ssh -N -p 9990 -L 5432:127.0.0.1:5432 root@93.127.138.73",
     "build": "node -e \"console.log('no build (plain JS)')\"",
-    "db:setup": "node scripts/setup-db.mjs",
-    "test:api": "node scripts/test-apis.mjs",
-    "test:e2e:detect": "node scripts/e2e-detect-flow.mjs",
-    "test:e2e:start-config": "node scripts/e2e-start-config-flow.mjs",
-    "test:e2e:he-subscribe": "node scripts/e2e-he-subscribe-flow.mjs"
+    "db:setup": "node scripts/db/setup-db.mjs",
+    "test:api": "node scripts/testing/test-apis.mjs",
+    "test:e2e:detect": "node scripts/testing/e2e-detect-flow.mjs",
+    "test:e2e:start-config": "node scripts/testing/e2e-start-config-flow.mjs",
+    "test:e2e:he-subscribe": "node scripts/testing/e2e-he-subscribe-flow.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1073.0",

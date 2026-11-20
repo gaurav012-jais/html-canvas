@@ -1,8 +1,10 @@
 export function createUiSlice(set, get) {
   return {
     previewMode: 'desktop',
-    dateFormat: JSON.parse(localStorage.getItem('templatecraft_settings') || '{}').dateFormat || 'YYYY-MM-DD',
-    timezone: JSON.parse(localStorage.getItem('templatecraft_settings') || '{}').timezone || 'Asia/Kolkata',
+    dateFormat:
+      JSON.parse(localStorage.getItem('templatecraft_settings') || '{}').dateFormat || 'YYYY-MM-DD',
+    timezone:
+      JSON.parse(localStorage.getItem('templatecraft_settings') || '{}').timezone || 'Asia/Kolkata',
     loading: false,
     saving: false,
     error: null,
@@ -14,9 +16,10 @@ export function createUiSlice(set, get) {
     setTimezone: (tz) => set({ timezone: tz }),
 
     addToast: (message, type = 'info') => {
-      const id = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
-        ? crypto.randomUUID()
-        : Math.random().toString(36).substring(2, 9) + Date.now().toString(36)
+      const id =
+        typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+          ? crypto.randomUUID()
+          : Math.random().toString(36).substring(2, 9) + Date.now().toString(36)
       set((s) => ({ toasts: [...s.toasts, { id, message, type }] }))
       setTimeout(() => get().removeToast(id), 3500)
     },
@@ -26,6 +29,14 @@ export function createUiSlice(set, get) {
     announce: (message) => {
       set({ srAnnouncement: '' })
       requestAnimationFrame(() => set({ srAnnouncement: message }))
+    },
+
+    logError: (componentName, error) => {
+      console.error(`[${componentName}] Error:`, error)
+      const addToast = get().addToast
+      if (typeof addToast === 'function') {
+        addToast('An error occurred. Please try again.', 'error')
+      }
     },
   }
 }

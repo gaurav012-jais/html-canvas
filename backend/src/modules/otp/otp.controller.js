@@ -19,8 +19,7 @@ const parseConfigPayload = (body) => {
 };
 
 const clientIpFromReq = (req) => {
-  const clientIp =
-    req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+  const clientIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
   return Array.isArray(clientIp) ? clientIp[0] : clientIp;
 };
 
@@ -271,13 +270,15 @@ export const otpController = {
     const providerConfig = parseConfigPayload(body);
     const result = await orangeBfProvider.syncSubscription({
       msisdn: phone,
-      subServiceId: providerConfig.syncSubServiceId || providerConfig.subServiceId,
+      subServiceId:
+        providerConfig.syncSubServiceId || providerConfig.subServiceId,
       serviceId: providerConfig.syncServiceId || providerConfig.serviceId,
       cpId: providerConfig.syncCpId || providerConfig.cpId,
       channel: providerConfig.syncChannel || providerConfig.channel,
       country: providerConfig.syncCountry || providerConfig.country,
       operator: providerConfig.syncOperator || providerConfig.operator,
-      reqType: providerConfig.syncReqType != null ? providerConfig.syncReqType : 1,
+      reqType:
+        providerConfig.syncReqType != null ? providerConfig.syncReqType : 1,
       config: providerConfig,
     });
 
@@ -286,7 +287,12 @@ export const otpController = {
       ok: Boolean(result?.success),
       provider: 'orange_bf_sync',
       responseCode: result?.responseCode ?? null,
-      message: result?.responseMessage || result?.message || (result?.success ? 'Subscription sync successful' : 'Subscription sync failed'),
+      message:
+        result?.responseMessage ||
+        result?.message ||
+        (result?.success
+          ? 'Subscription sync successful'
+          : 'Subscription sync failed'),
       httpStatus: result?.httpStatus ?? null,
       rawResponse: result?.rawResponse ?? null,
       requestUrl: result?.requestUrl ?? null,
@@ -302,7 +308,9 @@ export const otpController = {
     const successRule = getSuccessRule(providerConfig);
 
     const issues = [];
-    if (!(providerConfig.sendUrl || providerConfig.send_url || providerConfig.url)) {
+    if (
+      !(providerConfig.sendUrl || providerConfig.send_url || providerConfig.url)
+    ) {
       issues.push('sendUrl is missing');
     }
     if (!(providerConfig.verifyUrl || providerConfig.verify_url)) {

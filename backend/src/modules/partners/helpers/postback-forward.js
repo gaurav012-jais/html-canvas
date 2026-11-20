@@ -70,7 +70,9 @@ export const createPostbackForward = (deps) => {
 
   const resolveMissingPostbackUrl = async (row) => {
     if (row.vendorId) {
-      const vendor = await getVendorRepo().findOne({ where: { id: row.vendorId } });
+      const vendor = await getVendorRepo().findOne({
+        where: { id: row.vendorId },
+      });
       if (vendor) return vendor.postbackUrl?.trim() || '';
     }
     return String(row.postbackUrl || '').trim();
@@ -93,7 +95,10 @@ export const createPostbackForward = (deps) => {
       where: { id: parseInt(postbackId, 10) },
     });
     if (!row) {
-      return logSkippedFire(null, 'postback not found', { force: Boolean(options.force), manual });
+      return logSkippedFire(null, 'postback not found', {
+        force: Boolean(options.force),
+        manual,
+      });
     }
     const force = Boolean(options.force);
     if (row.status === ConversionPostbackStatus.SENT && !force) {
@@ -119,7 +124,9 @@ export const createPostbackForward = (deps) => {
 
     let vendorCode = '';
     if (row.vendorId) {
-      const vendor = await getVendorRepo().findOne({ where: { id: row.vendorId } });
+      const vendor = await getVendorRepo().findOne({
+        where: { id: row.vendorId },
+      });
       vendorCode = vendor?.code || '';
     }
 
@@ -273,18 +280,14 @@ export const createPostbackForward = (deps) => {
 
       if (row.visitId) {
         try {
-          await logVisitEvent(
-            row.visitId,
-            VisitEventType.POSTBACK_FAILED,
-            {
-              info: `Vendor / affiliate CPA postback error: ${err.message}`,
-              postbackId: row.id,
-              error: err.message,
-              url,
-              campid: vendorCampid,
-              trackingCampid: row.trackingCampid,
-            },
-          );
+          await logVisitEvent(row.visitId, VisitEventType.POSTBACK_FAILED, {
+            info: `Vendor / affiliate CPA postback error: ${err.message}`,
+            postbackId: row.id,
+            error: err.message,
+            url,
+            campid: vendorCampid,
+            trackingCampid: row.trackingCampid,
+          });
         } catch (eventErr) {
           console.warn(`postback visit event failed: ${eventErr.message}`);
         }

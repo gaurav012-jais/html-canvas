@@ -13,7 +13,9 @@ export class AddSuccessRedirectUrl1840000000000 {
           `ALTER TABLE "campaigns" ADD COLUMN "success_redirect_url" varchar(1024)`,
         );
       }
-    } else if (!(await queryRunner.hasColumn('campaigns', 'success_redirect_url'))) {
+    } else if (
+      !(await queryRunner.hasColumn('campaigns', 'success_redirect_url'))
+    ) {
       await queryRunner.query(
         `ALTER TABLE \`campaigns\` ADD COLUMN \`success_redirect_url\` varchar(1024)`,
       );

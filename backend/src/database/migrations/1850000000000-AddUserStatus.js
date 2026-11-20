@@ -27,9 +27,7 @@ export class AddUserStatus1850000000000 {
         `ALTER TABLE "users" DROP COLUMN IF EXISTS "status"`,
       );
     } else {
-      await queryRunner.query(
-        `ALTER TABLE \`users\` DROP COLUMN \`status\``,
-      );
+      await queryRunner.query(`ALTER TABLE \`users\` DROP COLUMN \`status\``);
     }
   }
 }

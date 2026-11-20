@@ -1,10 +1,6 @@
 import { In } from 'typeorm';
-import {
-  ConversionPostbackStatus,
-} from '../../../database/entities/conversion-postback.entity.js';
-import {
-  VisitEventType,
-} from '../../../database/entities/visit-event.entity.js';
+import { ConversionPostbackStatus } from '../../../database/entities/conversion-postback.entity.js';
+import { VisitEventType } from '../../../database/entities/visit-event.entity.js';
 import { ApiCallType } from '../../../database/entities/api-call-log.entity.js';
 import { Visit } from '../../../database/entities/visit.entity.js';
 import { maskPhone, daysAgo } from './postback-register.js';
@@ -19,9 +15,7 @@ import {
   normalizeTimezone,
   resolveRangeBounds,
 } from '../../../common/zoned-day.js';
-import {
-  describeVendorFireDecision,
-} from './operator-callback-status.js';
+import { describeVendorFireDecision } from './operator-callback-status.js';
 import {
   DAY_REPORT_EVENT_TYPES,
   DAY_REPORT_HE_LOG_TYPES,
@@ -149,14 +143,16 @@ export function createPostbackQuery(deps) {
       return emptySummary();
     }
 
-    const countryFilter = String(query.country || '').trim().toUpperCase();
-    const operatorFilter = String(query.operator || '').trim().toLowerCase();
+    const countryFilter = String(query.country || '')
+      .trim()
+      .toUpperCase();
+    const operatorFilter = String(query.operator || '')
+      .trim()
+      .toLowerCase();
     const campaignIdFilter = query.campaignId
       ? parseInt(query.campaignId, 10)
       : null;
-    const vendorIdFilter = query.vendorId
-      ? parseInt(query.vendorId, 10)
-      : null;
+    const vendorIdFilter = query.vendorId ? parseInt(query.vendorId, 10) : null;
     const offerCodeFilter = String(query.offerCode || '').trim();
 
     let scopedCampaigns = campaigns;
@@ -164,15 +160,18 @@ export function createPostbackQuery(deps) {
       scopedCampaigns = scopedCampaigns.filter(
         (c) =>
           String(c.country || '').toUpperCase() === countryFilter ||
-          String(c.marketOperator?.country?.code || '').toUpperCase() === countryFilter ||
-          String(c.marketOperator?.country?.name || '').toUpperCase() === countryFilter,
+          String(c.marketOperator?.country?.code || '').toUpperCase() ===
+            countryFilter ||
+          String(c.marketOperator?.country?.name || '').toUpperCase() ===
+            countryFilter,
       );
     }
     if (operatorFilter) {
       scopedCampaigns = scopedCampaigns.filter(
         (c) =>
           String(c.operator || '').toLowerCase() === operatorFilter ||
-          String(c.marketOperator?.code || '').toLowerCase() === operatorFilter ||
+          String(c.marketOperator?.code || '').toLowerCase() ===
+            operatorFilter ||
           String(c.marketOperator?.name || '').toLowerCase() === operatorFilter,
       );
     }
@@ -238,7 +237,9 @@ export function createPostbackQuery(deps) {
         { scopedCampaignIds, vendorIds },
       );
     } else if (scopedCampaignIds.length) {
-      pbQ.andWhere('p.campaignId IN (:...scopedCampaignIds)', { scopedCampaignIds });
+      pbQ.andWhere('p.campaignId IN (:...scopedCampaignIds)', {
+        scopedCampaignIds,
+      });
     } else {
       pbQ.andWhere('p.vendorId IN (:...vendorIds)', { vendorIds });
     }
@@ -292,11 +293,16 @@ export function createPostbackQuery(deps) {
         };
       }
       byVendorAcc[key].total += cnt;
-      if (status === ConversionPostbackStatus.PENDING) byVendorAcc[key].pending += cnt;
-      else if (status === ConversionPostbackStatus.RECEIVED) byVendorAcc[key].received += cnt;
-      else if (status === ConversionPostbackStatus.SENT) byVendorAcc[key].sent += cnt;
-      else if (status === ConversionPostbackStatus.FAILED) byVendorAcc[key].failed += cnt;
-      else if (status === ConversionPostbackStatus.SKIPPED) byVendorAcc[key].skipped += cnt;
+      if (status === ConversionPostbackStatus.PENDING)
+        byVendorAcc[key].pending += cnt;
+      else if (status === ConversionPostbackStatus.RECEIVED)
+        byVendorAcc[key].received += cnt;
+      else if (status === ConversionPostbackStatus.SENT)
+        byVendorAcc[key].sent += cnt;
+      else if (status === ConversionPostbackStatus.FAILED)
+        byVendorAcc[key].failed += cnt;
+      else if (status === ConversionPostbackStatus.SKIPPED)
+        byVendorAcc[key].skipped += cnt;
     }
 
     const opQ = getPostbackRepo()
@@ -311,7 +317,9 @@ export function createPostbackQuery(deps) {
         { scopedCampaignIds, vendorIds },
       );
     } else if (scopedCampaignIds.length) {
-      opQ.andWhere('p.campaignId IN (:...scopedCampaignIds)', { scopedCampaignIds });
+      opQ.andWhere('p.campaignId IN (:...scopedCampaignIds)', {
+        scopedCampaignIds,
+      });
     } else {
       opQ.andWhere('p.vendorId IN (:...vendorIds)', { vendorIds });
     }
@@ -337,12 +345,15 @@ export function createPostbackQuery(deps) {
     let byOperatorStatus = latestByOperatorStatus;
     if (scopedCampaignIds.length) {
       try {
-        const statusExpr =
-          `LOWER(COALESCE(NULLIF((regexp_match(l.request_body, '"status"[[:space:]]*:[[:space:]]*"([^"]+)"'))[1], ''), 'unknown'))`;
+        const statusExpr = `LOWER(COALESCE(NULLIF((regexp_match(l.request_body, '"status"[[:space:]]*:[[:space:]]*"([^"]+)"'))[1], ''), 'unknown'))`;
         const cbQ = getApiCallLogRepo()
           .createQueryBuilder('l')
-          .where('l.callType = :cbType', { cbType: ApiCallType.BILLING_CALLBACK })
-          .andWhere('l.campaignId IN (:...scopedCampaignIds)', { scopedCampaignIds })
+          .where('l.callType = :cbType', {
+            cbType: ApiCallType.BILLING_CALLBACK,
+          })
+          .andWhere('l.campaignId IN (:...scopedCampaignIds)', {
+            scopedCampaignIds,
+          })
           .andWhere('l.createdAt >= :since', { since });
         if (to) cbQ.andWhere('l.createdAt <= :until', { until: to });
         const cbRows = await cbQ
@@ -362,11 +373,19 @@ export function createPostbackQuery(deps) {
         hits.sort((a, b) => b.count - a.count);
         if (hits.length) byOperatorStatus = hits;
       } catch (err) {
-        console.warn(`callback status aggregation failed: ${err?.message || err}`);
-        callbacksReceived = latestByOperatorStatus.reduce((n, r) => n + r.count, 0);
+        console.warn(
+          `callback status aggregation failed: ${err?.message || err}`,
+        );
+        callbacksReceived = latestByOperatorStatus.reduce(
+          (n, r) => n + r.count,
+          0,
+        );
       }
     } else {
-      callbacksReceived = latestByOperatorStatus.reduce((n, r) => n + r.count, 0);
+      callbacksReceived = latestByOperatorStatus.reduce(
+        (n, r) => n + r.count,
+        0,
+      );
     }
 
     return {
@@ -387,19 +406,22 @@ export function createPostbackQuery(deps) {
   };
 
   const listPostbacks = async (userId, query = {}) => {
-    const { campaignIds, vendorIds, campaigns, vendors } = await resolveUserScope(userId);
+    const { campaignIds, vendorIds, campaigns, vendors } =
+      await resolveUserScope(userId);
     if (!campaignIds.length && !vendorIds.length) {
       return { total: 0, page: 1, limit: 25, items: [] };
     }
 
     const page = Math.max(1, parseInt(query.page, 10) || 1);
     const limit = Math.min(100, Math.max(1, parseInt(query.limit, 10) || 25));
-    const status = String(query.status || '').trim().toLowerCase();
-    const operatorStatus = String(query.operatorStatus || '').trim().toLowerCase();
+    const status = String(query.status || '')
+      .trim()
+      .toLowerCase();
+    const operatorStatus = String(query.operatorStatus || '')
+      .trim()
+      .toLowerCase();
     const q = String(query.q || '').trim();
-    const vendorIdFilter = query.vendorId
-      ? parseInt(query.vendorId, 10)
-      : null;
+    const vendorIdFilter = query.vendorId ? parseInt(query.vendorId, 10) : null;
     const campaignIdFilter = query.campaignId
       ? parseInt(query.campaignId, 10)
       : null;
@@ -417,14 +439,13 @@ export function createPostbackQuery(deps) {
       qb.where('p.vendorId IN (:...vendorIds)', { vendorIds });
     }
 
-    if (
-      status &&
-      Object.values(ConversionPostbackStatus).includes(status)
-    ) {
+    if (status && Object.values(ConversionPostbackStatus).includes(status)) {
       qb.andWhere('p.status = :status', { status });
     }
     if (operatorStatus) {
-      qb.andWhere('LOWER(p.operatorStatus) = :operatorStatus', { operatorStatus });
+      qb.andWhere('LOWER(p.operatorStatus) = :operatorStatus', {
+        operatorStatus,
+      });
     }
     if (vendorIdFilter && !Number.isNaN(vendorIdFilter)) {
       qb.andWhere('p.vendorId = :vendorIdFilter', { vendorIdFilter });
@@ -455,9 +476,7 @@ export function createPostbackQuery(deps) {
     // Load any referenced vendors not in user's vendor list (edge)
     const missingVids = [
       ...new Set(
-        rows
-          .map((r) => r.vendorId)
-          .filter((id) => id && !vendorMap[id]),
+        rows.map((r) => r.vendorId).filter((id) => id && !vendorMap[id]),
       ),
     ];
     if (missingVids.length) {
@@ -470,9 +489,7 @@ export function createPostbackQuery(deps) {
     const campaignMap = Object.fromEntries(campaigns.map((c) => [c.id, c]));
     const missingCids = [
       ...new Set(
-        rows
-          .map((r) => r.campaignId)
-          .filter((id) => id && !campaignMap[id]),
+        rows.map((r) => r.campaignId).filter((id) => id && !campaignMap[id]),
       ),
     ];
     if (missingCids.length) {
@@ -660,7 +677,10 @@ export function createPostbackQuery(deps) {
    */
   const getDayReport = async (userId, query = {}) => {
     const timezone = normalizeTimezone(query.timezone || DEFAULT_TIMEZONE);
-    let startYmd = String(query.from || query.date || todayYmd(timezone)).slice(0, 10);
+    let startYmd = String(query.from || query.date || todayYmd(timezone)).slice(
+      0,
+      10,
+    );
     let endYmd = String(query.to || startYmd).slice(0, 10);
     if (startYmd > endYmd) {
       const swap = startYmd;
@@ -682,7 +702,11 @@ export function createPostbackQuery(deps) {
     }
     const date = startYmd;
     const endDate = endYmd;
-    const { from, to } = resolveRangeBounds({ from: date, to: endDate, timezone });
+    const { from, to } = resolveRangeBounds({
+      from: date,
+      to: endDate,
+      timezone,
+    });
     const meta = { date, timezone, from: date, to: endDate, rangeClamped };
 
     const { campaignIds, vendorIds, vendors } = await resolveUserScope(userId);
@@ -733,8 +757,11 @@ export function createPostbackQuery(deps) {
     const logQ = getApiCallLogRepo()
       .createQueryBuilder('l')
       .where('l.createdAt BETWEEN :from AND :to', { from, to })
-      .andWhere('l.callType IN (:...logTypes)', { logTypes: DAY_REPORT_LOG_TYPES });
-    const unmatchedHits = '(l.campaignId IS NULL AND l.callType IN (:...hitTypes))';
+      .andWhere('l.callType IN (:...logTypes)', {
+        logTypes: DAY_REPORT_LOG_TYPES,
+      });
+    const unmatchedHits =
+      '(l.campaignId IS NULL AND l.callType IN (:...hitTypes))';
     const hitTypes = DAY_REPORT_HIT_TYPES;
     if (filters.vendorId) {
       logQ.leftJoin(Visit, 'lv', 'lv.id = l.visitId');
@@ -792,7 +819,9 @@ export function createPostbackQuery(deps) {
     const byMsisdn = new Map();
     const byVisit = new Map();
     const heLogTypes = new Set(DAY_REPORT_HE_LOG_TYPES);
-    const seedCallTypes = new Set(DAY_REPORT_HIT_TYPES.concat([ApiCallType.HE_REDIRECT]));
+    const seedCallTypes = new Set(
+      DAY_REPORT_HIT_TYPES.concat([ApiCallType.HE_REDIRECT]),
+    );
 
     const ensure = (raw) => {
       const msisdn = digitsMsisdn(raw);
@@ -930,7 +959,8 @@ export function createPostbackQuery(deps) {
         const bucket = ensure(row.msisdn);
         if (!bucket) continue;
         const inScope =
-          (row.campaignId && scopedCampaignIds.includes(Number(row.campaignId))) ||
+          (row.campaignId &&
+            scopedCampaignIds.includes(Number(row.campaignId))) ||
           (row.vendorId && scopedVendorIds.includes(Number(row.vendorId)));
         if (!inScope) continue;
         if (!bucket.postback || Number(row.id) > Number(bucket.postback.id)) {
@@ -991,10 +1021,18 @@ export function createPostbackQuery(deps) {
 
     numbers.sort((a, b) => {
       const at = Date.parse(
-        a.queuedAt || a.heRedirectedAt || a.billingReceivedAt || a.vendorFiredAt || 0,
+        a.queuedAt ||
+          a.heRedirectedAt ||
+          a.billingReceivedAt ||
+          a.vendorFiredAt ||
+          0,
       );
       const bt = Date.parse(
-        b.queuedAt || b.heRedirectedAt || b.billingReceivedAt || b.vendorFiredAt || 0,
+        b.queuedAt ||
+          b.heRedirectedAt ||
+          b.billingReceivedAt ||
+          b.vendorFiredAt ||
+          0,
       );
       return (Number.isNaN(bt) ? 0 : bt) - (Number.isNaN(at) ? 0 : at);
     });

@@ -22,12 +22,12 @@ import {
   buildCgRedirectUrl,
 } from './helpers/pack-url.js';
 import { createFlowCampaignFns } from './helpers/campaign.js';
-import { createFlowPageResponse } from './helpers/page-response.js';
-import { createFlowRouting } from './helpers/routing.js';
+import { createFlowPageResponse } from './core/page-response.js';
+import { createFlowRouting } from './routing/routing.js';
 import { createFlowVisit } from './helpers/visit.js';
-import { createGetPage } from './helpers/get-page.js';
-import { createFlowTransition } from './helpers/transition.js';
-import { createDetectMsisdn } from './helpers/detect.js';
+import { createGetPage } from './core/page-resolver.js';
+import { createFlowTransition } from './transition/transition.js';
+import { createDetectMsisdn } from './detect/detect.service.js';
 
 export const createFlowService = () => {
   const getApiConfigRepo = () => getRepository(ApiConfig);
