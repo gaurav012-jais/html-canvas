@@ -2,6 +2,7 @@
  * Universe DCB Provider Caller & Logger Utility
  */
 
+import { universeDcbProvider } from '../universe-dcb.provider.js';
 import { buildUniverseDcbLogRecord } from '../helpers/universe-dcb-log.js';
 import { getNestedValue } from '../helpers/universe-dcb-normalizer.js';
 import { stripProviderRequestIds } from './dcb-context.service.js';
@@ -68,7 +69,10 @@ export const callProviderWithLogging = async ({
   }
 };
 
-export const readProviderPurchaseTypes = async (ctx, provider) => {
+export const readProviderPurchaseTypes = async (
+  ctx,
+  provider = universeDcbProvider,
+) => {
   try {
     const response = await provider.getPublicConfig(
       ctx.config,

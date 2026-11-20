@@ -4,6 +4,8 @@
 
 import { ApiCallType } from '../../../database/entities/api-call-log.entity.js';
 import { redisService } from '../../../common/services/redis.service.js';
+import { universeDcbProvider } from '../universe-dcb.provider.js';
+import { apiCallLogService } from '../api-call-log.service.js';
 import {
   DCB_OUTCOMES,
   getNestedValue,
@@ -33,7 +35,10 @@ import {
   readProviderPurchaseTypes,
 } from './dcb-provider-caller.js';
 
-export const createDcbOperations = (provider, callLogger) => {
+export const createDcbOperations = (
+  provider = universeDcbProvider,
+  callLogger = apiCallLogService,
+) => {
   const normalize = (response, ctx) =>
     normalizeUniverseDcbResponse(response.data, ctx.config, {
       serviceId: ctx.serviceId,
