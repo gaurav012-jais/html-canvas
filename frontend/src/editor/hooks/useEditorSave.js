@@ -2,7 +2,7 @@ import { useState, useCallback } from 'react'
 import { getTemplatePayload } from '../services/saveTemplate'
 import { exportAllPagesFromEditor, exportCurrentPageFromEditor } from '../services/exportSite'
 import useStore from '../../store/useStore'
-import { trackEvent } from '../../utils/analytics'
+import { trackEvent } from '../../utils/tracking'
 
 export function commitActiveRte(ed) {
   if (!ed) return

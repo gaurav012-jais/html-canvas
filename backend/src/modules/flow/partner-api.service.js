@@ -1,7 +1,7 @@
 import axios from 'axios';
 import { apiCallLogService } from './api-call-log.service.js';
 import { ApiCallType } from '../../database/entities/api-call-log.entity.js';
-import { interpretChecksubResponse } from './helpers/checksub-rules.js';
+import { interpretChecksubResponse } from './routing/checksub-rules.js';
 import {
   fillSubscribeTemplate,
   mapSubServiceId,

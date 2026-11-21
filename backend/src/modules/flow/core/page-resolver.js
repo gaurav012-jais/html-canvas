@@ -10,7 +10,7 @@ import { variableResolverService } from '../../../common/services/variable-resol
 import { flowEngineService } from './engine.js';
 import { resolveLiveProjectData } from './page-response.js';
 import { redisService } from '../../../common/services/redis.service.js';
-import { flowHasConfirmNode, isPacksOnHome } from '../helpers/funnel-layout.js';
+import { flowHasConfirmNode, isPacksOnHome } from '../routing/funnel-layout.js';
 import { recordCgRedirectHop } from '../helpers/cg-redirect-log.js';
 import { resolveFlowOrBoth, wapBlockedError } from '../flows/index.js';
 import { cappingService } from '../../campaigns/capping.service.js';

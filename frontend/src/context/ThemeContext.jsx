@@ -1,5 +1,5 @@
 import { createContext, useState, useEffect, useCallback, useMemo } from 'react'
-import { loadTheme, saveTheme } from '../utils/storage'
+import { loadTheme, saveTheme } from '../store/adapters/localStorageAdapter'
 
 export const ThemeContext = createContext(null)
 

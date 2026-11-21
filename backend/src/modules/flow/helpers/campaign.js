@@ -1,14 +1,14 @@
 import { campaignsService } from '../../campaigns/campaigns.service.js';
 import { analyticsService } from '../../analytics/analytics.service.js';
 import { partnersService } from '../../partners/partners.service.js';
-import { flowEngineService } from '../flow-engine.service.js';
+import { flowEngineService } from '../core/engine.js';
 import { redisService } from '../../../common/services/redis.service.js';
 import {
   isNumericCampid,
   parseTrackingId,
   splitDualCampids,
 } from '../../markets/helpers/tracking-id.util.js';
-import { shouldRegisterPostbackAt as shouldRegisterPostbackAtPure } from './funnel-layout.js';
+import { shouldRegisterPostbackAt as shouldRegisterPostbackAtPure } from '../routing/funnel-layout.js';
 import { wapBlockedError } from '../flows/index.js';
 
 export function createFlowCampaignFns(deps) {

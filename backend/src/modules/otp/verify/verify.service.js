@@ -3,7 +3,7 @@ import { VisitEventType } from '../../../database/entities/visit-event.entity.js
 import { VisitStatus } from '../../../database/entities/visit.entity.js';
 import { ApiCallType } from '../../../database/entities/api-call-log.entity.js';
 import { smsProviderManager } from '../providers/sms-provider.manager.js';
-import { flowEngineService } from '../../flow/flow-engine.service.js';
+import { flowEngineService } from '../../flow/core/engine.js';
 import { orangeBfService } from '../../flow/orange-bf.service.js';
 import { universeDcbService } from '../../flow/universe-dcb.service.js';
 import { partnerApiService } from '../../flow/partner-api.service.js';

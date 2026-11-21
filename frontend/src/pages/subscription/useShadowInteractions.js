@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { transitionFlow } from '../../services/api/flow'
-import { trackEvent } from '../../utils/analytics'
+import { trackEvent } from '../../utils/tracking'
 import { parseSubscribeRoutes, resolveSubscribeDestination } from '../../editor/utils/subscribeRoutes'
 import { VALID_PAGES } from './constants'
 import {

@@ -9,7 +9,7 @@ import { ConversionPostback, ConversionPostbackStatus } from '../../database/ent
 import { campaignsService } from '../campaigns/campaigns.service.js';
 import { cappingService } from '../campaigns/capping.service.js';
 import { searchService } from '../search/search.service.js';
-import { flowEngineService } from '../flow/flow-engine.service.js';
+import { flowEngineService } from '../flow/core/engine.js';
 import { campaignVendorPerf } from '../otp/helpers/conversion.js';
 import { normalizeFailureReason } from '../otp/helpers/failure-reason.js';
 import { resolveFlowOrBoth } from '../flow/flows/index.js';

@@ -13,7 +13,7 @@ import { shouldRunHeOnDetect } from './he-gate.js';
 import {
   isPacksOnHome,
   resolvePacksOnHomeNoPhone,
-} from '../helpers/funnel-layout.js';
+} from '../routing/funnel-layout.js';
 import { recordCgRedirectHop } from '../helpers/cg-redirect-log.js';
 import { wapBlockedError } from '../flows/index.js';
 import { cappingService } from '../../campaigns/capping.service.js';

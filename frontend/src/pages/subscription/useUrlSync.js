@@ -1,7 +1,6 @@
 import { useEffect } from 'react'
 import { isExternalHttpRedirect, isHeSuppressedFunnelPage } from './flowHelpers'
-import { trackEvent } from '../../utils/analytics'
-import { trackGoogleAdsConversion } from '../../utils/googleAds'
+import { trackEvent, trackGoogleAdsConversion } from '../../utils/tracking'
 
 export function useUrlSync({
   pageData,

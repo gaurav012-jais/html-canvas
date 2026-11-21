@@ -10,7 +10,7 @@ import {
   VisitEventType,
 } from '../../../database/entities/visit-event.entity.js';
 import { CampaignPageType } from '../../../database/entities/campaign-page.entity.js';
-import { flowEngineService } from '../../flow/flow-engine.service.js';
+import { flowEngineService } from '../../flow/core/engine.js';
 import { searchService } from '../../search/search.service.js';
 import { apiCallLogService } from '../../flow/api-call-log.service.js';
 import { resolveApprovalHold } from './approval-control.js';

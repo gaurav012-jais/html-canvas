@@ -1,5 +1,5 @@
 import { isApiExposeEntry } from '../../../components/flow/verificationModes'
-import { buildDcbExposeUrls } from '../../../services/api/dcbExpose'
+import { buildDcbExposeUrls } from '../../../services/api/dcb'
 import { wapFlowDetail } from './shared/wapClicks'
 import { PIN_VENDOR_HINT, pinApiColumns } from './shared/pinApiStats'
 

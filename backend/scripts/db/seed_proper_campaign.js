@@ -12,7 +12,7 @@ dotenv.config({ path: path.join(__dirname, '../../.env') });
 
 import pg from 'pg';
 import { getDefaultFunnelPageData } from '../../src/database/seed/default-funnel-pages.js';
-import { flowEngineService } from '../../src/modules/flow/flow-engine.service.js';
+import { flowEngineService } from '../../src/modules/flow/core/engine.js';
 
 const PAGE_TYPES = [
   'HOME',

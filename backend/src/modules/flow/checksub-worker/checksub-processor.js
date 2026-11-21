@@ -15,7 +15,7 @@ import { DCB_OUTCOMES, normalizeUniverseDcbResponse } from '../helpers/universe-
 import { partnerApiService } from '../partner-api.service.js';
 import { apiCallLogService } from '../api-call-log.service.js';
 import { analyticsService } from '../../analytics/analytics.service.js';
-import { interpretChecksubResponse } from '../helpers/checksub-rules.js';
+import { interpretChecksubResponse } from '../routing/checksub-rules.js';
 import {
   classifyChecksubStatus,
   safeParseJson,

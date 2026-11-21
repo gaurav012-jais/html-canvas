@@ -7,7 +7,7 @@ import {
 } from '../../../database/entities/campaign-page.entity.js';
 import { CampaignTracking } from '../../../database/entities/campaign-tracking.entity.js';
 import { Template } from '../../../database/entities/template.entity.js';
-import { flowEngineService } from '../../flow/flow-engine.service.js';
+import { flowEngineService } from '../../flow/core/engine.js';
 import { marketsService } from '../../markets/markets.service.js';
 import {
   deriveCountryCode,

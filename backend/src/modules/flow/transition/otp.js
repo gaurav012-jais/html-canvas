@@ -4,7 +4,7 @@ import { VisitStatus } from '../../../database/entities/visit.entity.js';
 import { VisitEventType } from '../../../database/entities/visit-event.entity.js';
 import { flowEngineService } from '../core/engine.js';
 import { postbackService } from '../../partners/postback.service.js';
-import { packCanvasPage, continueFunnelPageAfterOtp } from '../helpers/funnel-layout.js';
+import { packCanvasPage, continueFunnelPageAfterOtp } from '../routing/funnel-layout.js';
 
 export function createHandleOtpContinue(deps) {
   const {

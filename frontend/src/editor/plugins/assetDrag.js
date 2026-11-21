@@ -1,5 +1,5 @@
 import { ensureBlockManagerMounted } from './dragAndDrop'
-import { buildImageHtml } from '../utils/imageHtml'
+import { buildImageHtml } from '../utils/insertImage'
 import { lockInsertion, unlockInsertion } from '../utils/insertionLock'
 
 function getTempDropModel(editor, content) {

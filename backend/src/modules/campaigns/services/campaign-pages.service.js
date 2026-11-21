@@ -10,7 +10,7 @@ import {
   getDefaultFunnelPageData,
   isClassicDefaultFunnelHtml,
 } from '../../../database/seed/default-funnel-pages.js';
-import { flowEngineService } from '../../flow/flow-engine.service.js';
+import { flowEngineService } from '../../flow/core/engine.js';
 import { invalidateFlowCampaignCache } from './campaign-cache.service.js';
 
 export const pageHasContent = (page) => {

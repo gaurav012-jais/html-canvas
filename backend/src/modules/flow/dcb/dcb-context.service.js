@@ -6,7 +6,7 @@ import { getRepository } from '../../../database/index.js';
 import { ApiConfig } from '../../../database/entities/api-config.entity.js';
 import { Visit } from '../../../database/entities/visit.entity.js';
 import { redisService } from '../../../common/services/redis.service.js';
-import { flowEngineService } from '../flow-engine.service.js';
+import { flowEngineService } from '../core/engine.js';
 import { flowService } from '../flow.service.js';
 
 export const localCorrelations = new Map();

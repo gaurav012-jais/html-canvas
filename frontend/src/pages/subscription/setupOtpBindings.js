@@ -5,7 +5,7 @@ import {
   persistPhone,
   resolvePhoneFromStorage,
 } from '../../services/flow/resolvePhoneNumber'
-import { trackEvent } from '../../utils/analytics'
+import { trackEvent } from '../../utils/tracking'
 
 export function getCountryCodeFromDom(phoneInput, shadow) {
   if (phoneInput) {

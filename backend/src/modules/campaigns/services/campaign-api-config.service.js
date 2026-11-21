@@ -1,6 +1,6 @@
 import { getRepository } from '../../../database/index.js';
 import { ApiConfig } from '../../../database/entities/api-config.entity.js';
-import { flowEngineService } from '../../flow/flow-engine.service.js';
+import { flowEngineService } from '../../flow/core/engine.js';
 import { invalidateFlowCampaignCache } from './campaign-cache.service.js';
 
 export const createCampaignApiConfigService = ({ findOne }) => {

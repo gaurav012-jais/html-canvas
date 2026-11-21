@@ -6,13 +6,15 @@
  */
 
 import { normalizeModeId } from '../../../components/flow/verificationModes'
-import HeaderInjection from './HeaderInjection'
+import { wapFlowDetail } from './shared/wapClicks'
 import OtpOnly from './OtpOnly'
-import Both from './Both'
 import UniverseDcb from './UniverseDcb'
 import OrangeBf from './OrangeBf'
 import None from './None'
 import CgHome from './CgHome'
+
+const HeaderInjection = wapFlowDetail('HEADER_INJECTION')
+const Both = wapFlowDetail('BOTH')
 
 const FLOWS = {
   HEADER_INJECTION: HeaderInjection,

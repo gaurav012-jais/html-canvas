@@ -7,7 +7,7 @@ import { Visit, VisitStatus } from '../../database/entities/visit.entity.js';
 import { VisitEvent, VisitEventType } from '../../database/entities/visit-event.entity.js';
 import { ApiCallType } from '../../database/entities/api-call-log.entity.js';
 import { CampaignPageType } from '../../database/entities/campaign-page.entity.js';
-import { flowEngineService } from './flow-engine.service.js';
+import { flowEngineService } from './core/engine.js';
 import { universeDcbProvider } from './universe-dcb.provider.js';
 import { apiCallLogService } from './api-call-log.service.js';
 import { redisService } from '../../common/services/redis.service.js';
@@ -19,7 +19,9 @@ import {
   normalizeUniverseDcbResponse,
 } from './helpers/universe-dcb-normalizer.js';
 import { buildUniverseDcbLogRecord } from './helpers/universe-dcb-log.js';
-import { pickDcbExposeRequestId } from './helpers/dcb-expose-fields.js';
+
+export const pickDcbExposeRequestId = (input = {}) =>
+  String(input.requestId || input.request_id || input.id || '').trim();
 import { buildDcbExposeHtmlScreen } from './helpers/dcb-expose-screen.js';
 import {
   DCB_EXPOSE_INBOUND_CALL_TYPES,

@@ -20,7 +20,7 @@ import AllowedCallbackStatusesField, {
 } from '../../components/partners/AllowedCallbackStatusesField'
 import { buildTrackingUrl } from '../../services/api/partners'
 import { buildOtpExposeApiGuide, buildOtpExposeMarkdownGuide, clampPayoutPercent } from '../../services/api/otp'
-import { buildDcbExposeApiGuide, buildDcbExposeMarkdownGuide, buildDcbExposeUrls } from '../../services/api/dcbExpose'
+import { buildDcbExposeApiGuide, buildDcbExposeMarkdownGuide, buildDcbExposeUrls } from '../../services/api/dcb'
 import { buildOrangeBfExposeMarkdownGuide } from './flows/OrangeBf'
 import { downloadTextFile } from '../../utils/download'
 import useStore from '../../store/useStore'
