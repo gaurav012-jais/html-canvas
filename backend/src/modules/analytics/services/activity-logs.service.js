@@ -38,7 +38,9 @@ export const getCampaignActivityLogs = async (campaignId, userId, query = {}) =>
   data.forEach((visit) => {
     if (visit.events) {
       visit.events.sort(
-        (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
+        (a, b) =>
+          (new Date(a?.createdAt || 0).getTime() || 0) -
+          (new Date(b?.createdAt || 0).getTime() || 0),
       );
     }
   });

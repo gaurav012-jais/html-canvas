@@ -111,8 +111,9 @@ export const updateVisit = async (id, status, pageType, phone) => {
   if (pageType) {
     visit.pageType = pageType;
   }
-  if (phone && phone.trim() !== '') {
-    visit.phone = phone.trim();
+  const cleanPhone = phone != null ? String(phone).trim() : '';
+  if (cleanPhone) {
+    visit.phone = cleanPhone;
   }
 
   const saved = await getVisitRepo().save(visit);
@@ -136,7 +137,7 @@ export const updateVisit = async (id, status, pageType, phone) => {
 
 export const setVisitPhone = async (id, phone) => {
   if (!id || Number.isNaN(Number(id))) return;
-  const cleanPhone = phone?.trim();
+  const cleanPhone = phone != null ? String(phone).trim() : '';
   if (!cleanPhone) return;
   await getVisitRepo().update({ id: parseInt(id, 10) }, { phone: cleanPhone });
 };

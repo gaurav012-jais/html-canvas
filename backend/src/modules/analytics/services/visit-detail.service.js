@@ -71,7 +71,9 @@ export const getVisitDetail = async (visitId, userId) => {
 
   if (visit.events) {
     visit.events.sort(
-      (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
+      (a, b) =>
+        (new Date(a?.createdAt || 0).getTime() || 0) -
+        (new Date(b?.createdAt || 0).getTime() || 0),
     );
   }
 
@@ -225,7 +227,9 @@ export const getVisitDetail = async (visitId, userId) => {
       apiCallId: c.id,
     })),
   ].sort(
-    (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
+    (a, b) =>
+      (new Date(a?.createdAt || 0).getTime() || 0) -
+      (new Date(b?.createdAt || 0).getTime() || 0),
   );
 
   return {

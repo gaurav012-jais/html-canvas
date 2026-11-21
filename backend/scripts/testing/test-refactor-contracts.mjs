@@ -52,6 +52,7 @@ for (const method of expectedAnalyticsMethods) {
 
 // Edge case tests for maskPhone
 assert.strictEqual(maskPhone('+1 (234) 567-8900'), '+1 (234) 567-8900');
+assert.strictEqual(maskPhone(1234567890), '1234567890');
 assert.strictEqual(maskPhone(null), undefined);
 assert.strictEqual(maskPhone(''), undefined);
 assert.strictEqual(maskPhone(undefined), undefined);
@@ -77,14 +78,20 @@ assert.deepStrictEqual(parseJsonSafe('{"a":1}'), { a: 1 });
 assert.strictEqual(parseJsonSafe('not-json'), 'not-json');
 assert.deepStrictEqual(parseJsonSafe({ a: 1 }), { a: 1 });
 
-// String and Date event sorting edge cases (prevent a.createdAt.getTime crash)
+// String, Date, null and undefined event sorting edge cases (prevent a.createdAt.getTime crash)
 const testEvents = [
   { createdAt: '2026-11-21T10:05:00.000Z', eventType: 'OTP_VIEW' },
   { createdAt: new Date('2026-11-21T10:00:00.000Z'), eventType: 'VISIT' },
+  { createdAt: undefined, eventType: 'UNKNOWN_PREV' },
 ];
-testEvents.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
-assert.strictEqual(testEvents[0].eventType, 'VISIT');
-assert.strictEqual(testEvents[1].eventType, 'OTP_VIEW');
+testEvents.sort(
+  (a, b) =>
+    (new Date(a?.createdAt || 0).getTime() || 0) -
+    (new Date(b?.createdAt || 0).getTime() || 0),
+);
+assert.strictEqual(testEvents[0].eventType, 'UNKNOWN_PREV');
+assert.strictEqual(testEvents[1].eventType, 'VISIT');
+assert.strictEqual(testEvents[2].eventType, 'OTP_VIEW');
 
 // Edge case tests for checksubStatusLabel
 assert.strictEqual(checksubStatusLabel({ currentStatus: 'active' }), 'ACTIVE');
@@ -97,6 +104,18 @@ assert.strictEqual(checksubStatusLabel({}, true), 'SUCCESS');
 const boolSql = jsonBoolSql('event.metadata', 'success');
 assert.ok(boolSql.includes('event.metadata'), 'jsonBoolSql should generate boolean SQL check');
 assert.ok(boolSql.includes('success'), 'jsonBoolSql should inspect target property');
+
+// Check query builder exports
+import {
+  buildVendorClicksQuery,
+  buildVendorEventsQuery,
+  buildVendorPostbacksQuery,
+  buildVendorFailuresQuery,
+} from '../../src/modules/analytics/services/vendor-stats-query.builder.js';
+assert.strictEqual(typeof buildVendorClicksQuery, 'function');
+assert.strictEqual(typeof buildVendorEventsQuery, 'function');
+assert.strictEqual(typeof buildVendorPostbacksQuery, 'function');
+assert.strictEqual(typeof buildVendorFailuresQuery, 'function');
 
 console.log('✅ Option 1: Analytics Service Facade tests PASSED!');
 
@@ -169,13 +188,17 @@ assert.throws(() => parseConfig({ enabled: false }), { code: 'DCB_NOT_CONFIGURED
 assert.throws(() => parseConfig('invalid json'), { code: 'DCB_CONFIG_INVALID' });
 assert.throws(() => parseConfig('[1, 2]'), { code: 'DCB_CONFIG_INVALID' });
 
-// correlationKey edge cases (primitives, objects, strings)
+// correlationKey edge cases (primitives, objects, strings, null, undefined)
 const cKey1 = correlationKey('10', 5, '1234567890');
 assert.strictEqual(cKey1, 'dcb:pending:10:5:1234567890');
 const cKey2 = correlationKey('10', { id: 5 }, '1234567890');
 assert.strictEqual(cKey2, 'dcb:pending:10:5:1234567890');
 const cKey3 = correlationKey('10', { visitId: 5 }, '1234567890');
 assert.strictEqual(cKey3, 'dcb:pending:10:5:1234567890');
+const cKey4 = correlationKey('10', undefined, '1234567890');
+assert.strictEqual(cKey4, 'dcb:pending:10:0:1234567890');
+const cKey5 = correlationKey('10', null, '1234567890');
+assert.strictEqual(cKey5, 'dcb:pending:10:0:1234567890');
 
 const rKey = requestCorrelationKey('10', '2', 'REQ_1');
 assert.strictEqual(rKey, 'dcb:req:10:2:REQ_1');
@@ -219,6 +242,28 @@ assert.ok(
   'Exactly one concurrent caller must acquire lock in same event loop tick',
 );
 await releaseConfirmLock(concurrentLock);
+
+// Test confirm lock cleanup when redisService.setNx throws
+import { redisService } from '../../src/common/services/redis.service.js';
+const origSetNx = redisService.setNx;
+const errorLock = 'dcb:req:999:2:REQ_ERR:confirm';
+redisService.setNx = async () => {
+  throw new Error('Simulated Redis crash');
+};
+await assert.rejects(
+  () => acquireConfirmLock(errorLock),
+  /Simulated Redis crash/,
+  'acquireConfirmLock should propagate error from redis',
+);
+// Restore setNx and verify local lock was cleaned up (not permanently deadlocked)
+redisService.setNx = origSetNx;
+const recoveredAcquire = await acquireConfirmLock(errorLock);
+assert.strictEqual(
+  recoveredAcquire,
+  true,
+  'Lock should not be permanently stuck in memory after an error',
+);
+await releaseConfirmLock(errorLock);
 
 // Test error handling on expose operations when called without arguments
 await assert.rejects(
@@ -339,12 +384,18 @@ assert.strictEqual(STAT_GROUP_BY_SAFE(null), 'date');
 assert.strictEqual(STAT_GROUP_BY_SAFE(undefined), 'date');
 console.log('✅ Daily Stats Service Facade tests PASSED!');
 
-// 5. Check Orange BF Service Facade
-console.log('--- Checking Orange BF Service Facade ---');
+// 5. Check Orange BF Service & Provider Facades
+console.log('--- Checking Orange BF Service & Provider Facades ---');
 import {
   orangeBfService,
   createOrangeBfService,
 } from '../../src/modules/flow/orange-bf.service.js';
+import {
+  orangeBfProvider,
+  createOrangeBfProvider,
+  ORANGE_BF_DEFAULTS,
+} from '../../src/modules/flow/orange-bf.provider.js';
+
 const expectedOrangeBfMethods = [
   'startOrCheckSub',
   'verifyOtp',
@@ -358,7 +409,24 @@ const customOrangeInstance = createOrangeBfService();
 for (const method of expectedOrangeBfMethods) {
   assert.strictEqual(typeof customOrangeInstance[method], 'function', `Missing factory orangeInstance.${method}`);
 }
-console.log('✅ Orange BF Service Facade tests PASSED!');
+
+const expectedOrangeBfProviderMethods = [
+  'generateAuthOtp',
+  'validateAuthOtp',
+  'checkSubscription',
+  'unsubscribe',
+  'syncSubscription',
+];
+for (const method of expectedOrangeBfProviderMethods) {
+  assert.strictEqual(typeof orangeBfProvider[method], 'function', `Missing orangeBfProvider.${method}`);
+}
+const customBfProviderInstance = createOrangeBfProvider();
+for (const method of expectedOrangeBfProviderMethods) {
+  assert.strictEqual(typeof customBfProviderInstance[method], 'function', `Missing customBfProviderInstance.${method}`);
+}
+assert.strictEqual(ORANGE_BF_DEFAULTS.country, 'BF');
+
+console.log('✅ Orange BF Service & Provider Facades tests PASSED!');
 
 // 6. Check Header Enrichment (HE) Service Facade
 console.log('--- Checking Header Enrichment (HE) Service Facade ---');
@@ -452,6 +520,131 @@ assert.strictEqual(typeof flowService.detectMsisdn, 'function', 'Missing flowSer
 const customDetectInstance = createDetectMsisdn({});
 assert.strictEqual(typeof customDetectInstance.detectMsisdn, 'function', 'Missing customDetectInstance.detectMsisdn');
 console.log('✅ Flow Service & Detect MSISDN Facades tests PASSED!');
+
+// 9. Check Partner API Service Facade
+console.log('--- Checking Partner API Service Facade ---');
+import {
+  partnerApiService,
+  createPartnerApiService,
+  parseHeaders,
+  buildVars,
+  partnerRequestBody,
+} from '../../src/modules/flow/partner-api.service.js';
+
+const expectedPartnerApiMethods = [
+  'parseHeaders',
+  'resolveTemplate',
+  'mapSubServiceId',
+  'buildVars',
+  'partnerRequestBody',
+  'sendRequest',
+  'resolveMsisdn',
+  'checkSubscription',
+  'checkBlocked',
+  'subscribe',
+  'recordSubscribeSkip',
+];
+
+for (const method of expectedPartnerApiMethods) {
+  assert.strictEqual(
+    typeof partnerApiService[method],
+    'function',
+    `Missing partnerApiService.${method}`,
+  );
+}
+
+const customPartnerInstance = createPartnerApiService();
+for (const method of expectedPartnerApiMethods) {
+  assert.strictEqual(
+    typeof customPartnerInstance[method],
+    'function',
+    `Missing factory customPartnerInstance.${method}`,
+  );
+}
+
+// Unit checks
+assert.deepStrictEqual(parseHeaders('{"Auth":"Bearer 123"}'), { Auth: 'Bearer 123' });
+assert.deepStrictEqual(parseHeaders(''), {});
+assert.deepStrictEqual(parseHeaders(null), {});
+
+const vars = buildVars({ phone: '9876543210', planId: 'weekly' });
+assert.strictEqual(vars.msisdn, '9876543210');
+assert.strictEqual(vars.pack, 'weekly');
+
+const stripped = partnerRequestBody({ clickId: '123', rcid: '456', user: 'bob' });
+assert.strictEqual(stripped.clickId, undefined);
+assert.strictEqual(stripped.user, 'bob');
+
+console.log('✅ Partner API Service Facade tests PASSED!');
+
+// 10. Check Postback Callback Service Facade
+console.log('--- Checking Postback Callback Service Facade ---');
+import {
+  createPostbackCallback,
+  parseCallbackClickId,
+  parseCallbackMsisdn,
+} from '../../src/modules/partners/helpers/postback-callback.js';
+
+assert.strictEqual(typeof createPostbackCallback, 'function');
+assert.strictEqual(parseCallbackClickId({ click_id: 'CLK_123' }), 'CLK_123');
+assert.strictEqual(parseCallbackClickId({ ext_id: 'EXT_456' }), 'EXT_456');
+assert.strictEqual(parseCallbackClickId(null), '');
+
+assert.strictEqual(parseCallbackMsisdn({ msisdn: '+1 (234) 567-8900' }), '12345678900');
+assert.strictEqual(parseCallbackMsisdn({ phone: '999888' }), '999888');
+assert.strictEqual(parseCallbackMsisdn(null), '');
+
+const dummyCallbackHandler = createPostbackCallback({
+  getPostbackRepo: () => ({ findOne: async () => null, save: async () => {} }),
+  getVisitRepo: () => ({ createQueryBuilder: () => ({ where: () => ({ orderBy: () => ({ getOne: async () => null }) }) }) }),
+  logApiCall: async () => {},
+  registerPending: async () => ({ skipped: true }),
+  firePostback: async () => ({ ok: true }),
+  appendHit: async () => {},
+});
+
+assert.strictEqual(typeof dummyCallbackHandler.processOperatorCallback, 'function');
+const rejectResult = await dummyCallbackHandler.processOperatorCallback({});
+assert.strictEqual(rejectResult.success, false);
+assert.strictEqual(rejectResult.skipped, true);
+
+console.log('✅ Postback Callback Service Facade tests PASSED!');
+
+// 11. Rule of 300 Audit on all Option 1 and Option 2 files
+console.log('--- Verifying Rule of 300 (< 300 LOC) on Option 1 & 2 files ---');
+import fs from 'node:fs';
+import path from 'node:path';
+
+const filesToCheck = [
+  'backend/src/modules/analytics/analytics.service.js',
+  'backend/src/modules/analytics/services/activity-logs.service.js',
+  'backend/src/modules/analytics/services/analytics-archive.service.js',
+  'backend/src/modules/analytics/services/campaign-analytics.service.js',
+  'backend/src/modules/analytics/services/campaign-metrics.service.js',
+  'backend/src/modules/analytics/services/campaign-vendor-stats.service.js',
+  'backend/src/modules/analytics/services/index.js',
+  'backend/src/modules/analytics/services/page-path.helper.js',
+  'backend/src/modules/analytics/services/vendor-stats-query.builder.js',
+  'backend/src/modules/analytics/services/visit-detail.service.js',
+  'backend/src/modules/analytics/services/visit-tracking.service.js',
+  'backend/src/modules/flow/universe-dcb-expose.service.js',
+  'backend/src/modules/flow/universe-dcb/dcb-expose-confirm.service.js',
+  'backend/src/modules/flow/universe-dcb/dcb-expose-context.service.js',
+  'backend/src/modules/flow/universe-dcb/dcb-expose-inbound.service.js',
+  'backend/src/modules/flow/universe-dcb/dcb-expose-operations.service.js',
+  'backend/src/modules/flow/universe-dcb/dcb-expose-session.js',
+  'backend/src/modules/flow/universe-dcb/index.js',
+];
+
+for (const relPath of filesToCheck) {
+  const content = fs.readFileSync(relPath, 'utf8');
+  const lineCount = content.split('\n').length;
+  assert.ok(
+    lineCount < 300,
+    `File ${relPath} has ${lineCount} lines, violating the strictly < 300 LOC rule!`,
+  );
+}
+console.log('✅ Rule of 300 PASSED: All 18 Option 1 & Option 2 files are strictly < 300 LOC!');
 
 console.log('🎉 ALL REFACTOR CONTRACT CHECKS PASSED SUCCESSFULLY!');
 process.exit(0);

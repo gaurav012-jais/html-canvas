@@ -126,8 +126,8 @@ export const resolveAssignedVendor = async (campaign, vendorRaw) => {
 export const correlationKey = (campaignId, visitId, msisdn) => {
   const vId =
     typeof visitId === 'object' && visitId !== null
-      ? Number(visitId.visitId ?? visitId.id)
-      : Number(visitId);
+      ? Number(visitId.visitId ?? visitId.id) || 0
+      : Number(visitId) || 0;
   return `dcb:pending:${campaignId}:${vId}:${msisdn}`;
 };
 
@@ -155,7 +155,7 @@ export const loadCorrelation = async (key) => {
     localCorrelations.delete(key);
     return null;
   }
-  return local.value.providerRequestId ? local.value : null;
+  return local.value?.providerRequestId ? local.value : null;
 };
 
 export const clearCorrelation = async (keys) => {
@@ -173,12 +173,17 @@ export const acquireConfirmLock = async (lockKey) => {
   }
   // Synchronously reserve local lock to prevent race condition across concurrent calls in same tick
   localConfirmLocks.add(lockKey);
-  const lockAcquired = await redisService.setNx(lockKey, '1', 30);
-  if (!lockAcquired) {
+  try {
+    const lockAcquired = await redisService.setNx(lockKey, '1', 30);
+    if (!lockAcquired) {
+      localConfirmLocks.delete(lockKey);
+      return false;
+    }
+    return true;
+  } catch (err) {
     localConfirmLocks.delete(lockKey);
-    return false;
+    throw err;
   }
-  return true;
 };
 
 export const releaseConfirmLock = async (lockKey) => {

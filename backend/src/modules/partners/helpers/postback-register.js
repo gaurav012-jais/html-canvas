@@ -1,76 +1,28 @@
+/**
+ * Postback Register (Facade)
+ *
+ * Safe, backward-compatible Facade delegating to specialized postback registration modules:
+ * - register-delayed-checksub.js: Universal 30-min audit checksub scheduler
+ * - register-pending.js: MSISDN-unique postback upsert & immediate dispatch
+ * - postback-template.js: Macro replacement, affiliate RCID extraction & serialization
+ */
+
 import { getRepository } from '../../../database/index.js';
 import { Vendor } from '../../../database/entities/vendor.entity.js';
 import { CampaignTracking } from '../../../database/entities/campaign-tracking.entity.js';
-import {
-  ConversionPostback,
-  ConversionPostbackStatus,
-} from '../../../database/entities/conversion-postback.entity.js';
+import { ConversionPostback } from '../../../database/entities/conversion-postback.entity.js';
 import { Visit } from '../../../database/entities/visit.entity.js';
-import { analyticsService } from '../../analytics/analytics.service.js';
-import { VisitEventType } from '../../../database/entities/visit-event.entity.js';
 import { searchService } from '../../search/search.service.js';
 import { apiCallLogService } from '../../flow/api-call-log.service.js';
 import { ApiCallType } from '../../../database/entities/api-call-log.entity.js';
 import { appendPostbackHitSafe } from './postback-day-report-file.js';
-import {
-  affiliateRcidFromVisit,
-  fillTemplate,
-  serializeBody,
-} from './postback-template.js';
+import { fillTemplate } from './postback-template.js';
+import { createRegisterPending } from './register/register-pending.js';
 
 /** Returns full MSISDN for UI display (no masking). */
 export const maskPhone = (phone) => {
   if (!phone) return undefined;
   return String(phone).trim();
-};
-
-const safeParseJson = (raw) => {
-  if (!raw) return {};
-  if (typeof raw === 'object') return raw;
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return {};
-  }
-};
-
-const maybeScheduleDelayedChecksub = async (row) => {
-  if (!row?.id || !row?.msisdn || !row?.campaignId) return;
-  try {
-    const { scheduleDelayedChecksub } =
-      await import('../../flow/delayed-checksub.worker.js');
-    const { ApiConfig } =
-      await import('../../../database/entities/api-config.entity.js');
-    const { Campaign } =
-      await import('../../../database/entities/campaign.entity.js');
-
-    const apiConfig = await getRepository(ApiConfig).findOne({
-      where: { campaignId: parseInt(row.campaignId, 10) },
-    });
-    const campaign = await getRepository(Campaign).findOne({
-      where: { id: parseInt(row.campaignId, 10) },
-      select: ['id', 'verificationMode'],
-    });
-
-    const isOrangeBf =
-      String(campaign?.verificationMode || '').toUpperCase() === 'ORANGE_BF';
-    const hasChecksubUrl = isOrangeBf || Boolean(apiConfig?.subscriptionApi);
-
-    // Universal 30-min audit checksub for all conversions where checksub is available
-    if (hasChecksubUrl) {
-      await scheduleDelayedChecksub({
-        postbackId: row.id,
-        msisdn: row.msisdn,
-        campaignId: row.campaignId,
-        delayMinutes: 30,
-      });
-    }
-  } catch (err) {
-    console.warn(
-      '[PostbackRegister] Failed to schedule delayed checksub:',
-      err.message,
-    );
-  }
 };
 
 export {
@@ -93,6 +45,7 @@ export const createPostbackRegister = (deps) => {
     getVendorRepo = () => getRepository(Vendor),
     getVisitRepo = () => getRepository(Visit),
     getTrackingRepo = () => getRepository(CampaignTracking),
+    firePostback,
   } = deps;
 
   const resolvePostbackTemplate = async (vendorId) => {
@@ -117,7 +70,6 @@ export const createPostbackRegister = (deps) => {
       const { template, vendorId } = await resolvePostbackTemplate(t.vendorId);
       if (template) return { vendorId, template };
     }
-    // Prefer any linked vendor even without URL (row still visible in Postbacks UI).
     const firstVendorId = trackings.find((t) => t.vendorId)?.vendorId || null;
     return { vendorId: firstVendorId, template: '' };
   };
@@ -156,216 +108,14 @@ export const createPostbackRegister = (deps) => {
     }
   };
 
-  /**
-   * Queue a pending postback (confirm / CG / HE new redirect).
-   * MSISDN-unique upsert: same number → update clickId, rcid, vendor campid
-   * and reset status to pending (SAFWAP sendcallback=0 parity).
-   * campid = vendor; trackingCampid = ours.
-   */
-  const registerPending = async (input) => {
-    const { firePostback } = deps;
-    const msisdn =
-      String(input.msisdn || input.phone || '').replace(/\D/g, '') || null;
-    let vendorId = input.vendorId || null;
-    let clickId = input.clickId || '';
-    if (!msisdn && !String(clickId || '').trim() && !input.visitId) {
-      return { skipped: true, reason: 'missing msisdn or click_id' };
-    }
-    let rcid = input.rcid || '';
-    let campid = String(input.campid || '').trim();
-    let trackingCampid = String(
-      input.trackingCampid || input.tracking_campid || '',
-    ).trim();
-    let visitId = input.visitId || null;
-    let campaignId = input.campaignId || null;
-
-    if (
-      visitId &&
-      (!vendorId ||
-        !clickId ||
-        !rcid ||
-        !campid ||
-        !trackingCampid ||
-        !campaignId)
-    ) {
-      const visit = await getVisitRepo().findOne({
-        where: { id: parseInt(visitId, 10) },
-      });
-      if (visit) {
-        vendorId = vendorId || visit.vendorId || null;
-        clickId = clickId || visit.clickId || '';
-        rcid = rcid || affiliateRcidFromVisit(visit) || '';
-        campaignId = campaignId || visit.campaignId || null;
-        if (!campid && visit.campid) campid = String(visit.campid);
-        if (!trackingCampid && visit.trackingCampid) {
-          trackingCampid = String(visit.trackingCampid);
-        }
-      }
-    }
-
-    // Legacy rows: if only one id was stored as click_id, treat as rcid for network.
-    if (!rcid && clickId && input.legacyClickAsRcid) {
-      rcid = clickId;
-    }
-
-    let { template, vendorId: resolvedVendorId } =
-      await resolvePostbackTemplate(vendorId);
-    vendorId = resolvedVendorId || vendorId;
-
-    // No vendor on the visit (opened without ?vid=) → that campaign's assigned vendor.
-    // A visit that already has a vendor never borrows another vendor's callback URL.
-    if (!template && !vendorId) {
-      const fromCampaign = await resolveVendorFromCampaign(campaignId);
-      if (fromCampaign.vendorId) vendorId = fromCampaign.vendorId;
-      if (fromCampaign.template) template = fromCampaign.template;
-    }
-
-    if (!template) {
-      // Still queue pending so Postbacks UI + billing callback lookup work.
-      console.warn(
-        `[postback] queueing pending without postback_url (msisdn=${msisdn || 'none'}, clickId=${clickId || 'none'}, vendorId=${vendorId || 'none'}, campaignId=${campaignId || 'none'})`,
-      );
-    }
-
-    if (!msisdn && !String(clickId || '').trim()) {
-      return { skipped: true, reason: 'missing msisdn or click_id' };
-    }
-
-    const findExisting = async () => {
-      const cid = String(clickId || '').trim();
-      if (cid) {
-        const byClick = await getPostbackRepo()
-          .createQueryBuilder('p')
-          .where('p.clickId = :clickId', { clickId: cid })
-          .orderBy('p.id', 'DESC')
-          .take(1)
-          .getOne();
-        if (byClick) return byClick;
-      }
-      if (msisdn) {
-        return getPostbackRepo()
-          .createQueryBuilder('p')
-          .where('p.msisdn = :msisdn', { msisdn })
-          .orderBy('p.id', 'DESC')
-          .take(1)
-          .getOne();
-      }
-      return null;
-    };
-
-    const existing = await findExisting();
-
-    const parsedVisitId = visitId ? parseInt(visitId, 10) : null;
-    const savedTemplate = template || null;
-    const keepIfSent = Boolean(input.keepIfSent);
-    const forceFire = Boolean(input.forceFire || input.force);
-    const alreadySent = existing?.status === ConversionPostbackStatus.SENT;
-    const nextStatus = input.asReceived
-      ? ConversionPostbackStatus.RECEIVED
-      : ConversionPostbackStatus.PENDING;
-
-    if (existing) {
-      existing.clickId = clickId || existing.clickId || null;
-      existing.rcid = rcid || existing.rcid || null;
-      existing.campid = campid || existing.campid || null;
-      if (msisdn) existing.msisdn = msisdn;
-      if (trackingCampid) existing.trackingCampid = trackingCampid;
-      if (parsedVisitId) existing.visitId = parsedVisitId;
-      if (campaignId) existing.campaignId = campaignId;
-      if (vendorId) existing.vendorId = vendorId;
-      if (savedTemplate) existing.postbackUrl = savedTemplate;
-      if (!(keepIfSent && alreadySent) || forceFire) {
-        existing.status = nextStatus;
-        existing.httpStatus = null;
-        existing.responseBody = null;
-        existing.errorMessage = null;
-        existing.sentAt = null;
-      }
-      if (input.offerCode) existing.offerCode = input.offerCode;
-      if (input.operatorStatus) {
-        existing.operatorStatus = String(input.operatorStatus).slice(0, 64);
-      }
-
-      const row = await getPostbackRepo().save(existing);
-
-      if (!input.asReceived) {
-        if (parsedVisitId) {
-          await analyticsService.logEvent(
-            parsedVisitId,
-            VisitEventType.POSTBACK_PENDING,
-            {
-              info: 'Vendor CPA postback updated (msisdn upsert) — waiting for billing callback.',
-              postbackId: row.id,
-              updated: true,
-              rcid: row.rcid,
-              clickId: row.clickId,
-              campid: row.campid,
-              trackingCampid: row.trackingCampid,
-              postbackUrl: row.postbackUrl,
-            },
-          );
-        } else {
-          await indexPostbackEvent(row, 'POSTBACK_PENDING', { updated: true });
-        }
-      }
-
-      void maybeScheduleDelayedChecksub(row);
-
-      if (input.fireImmediate) {
-        return firePostback(row.id, { force: forceFire });
-      }
-
-      return { success: true, id: row.id, status: row.status, updated: true };
-    }
-
-    const row = await getPostbackRepo().save(
-      getPostbackRepo().create({
-        visitId: parsedVisitId,
-        campaignId: campaignId || null,
-        vendorId: vendorId || null,
-        affiliateId: null,
-        msisdn: msisdn || null,
-        campid: campid || null,
-        trackingCampid: trackingCampid || null,
-        clickId: clickId || null,
-        rcid: rcid || null,
-        offerCode: input.offerCode || null,
-        postbackUrl: savedTemplate,
-        status: nextStatus,
-        operatorStatus: input.operatorStatus
-          ? String(input.operatorStatus).slice(0, 64)
-          : null,
-      }),
-    );
-
-    if (!input.asReceived) {
-      if (parsedVisitId) {
-        await analyticsService.logEvent(
-          parsedVisitId,
-          VisitEventType.POSTBACK_PENDING,
-          {
-            info: 'Vendor CPA postback queued — waiting for billing callback.',
-            postbackId: row.id,
-            rcid: row.rcid,
-            clickId: row.clickId,
-            campid: row.campid,
-            trackingCampid: row.trackingCampid,
-            postbackUrl: row.postbackUrl,
-          },
-        );
-      } else {
-        await indexPostbackEvent(row, 'POSTBACK_PENDING');
-      }
-    }
-
-    void maybeScheduleDelayedChecksub(row);
-
-    if (input.fireImmediate) {
-      return firePostback(row.id, { force: forceFire });
-    }
-
-    return { success: true, id: row.id, status: row.status };
-  };
+  const registerPending = createRegisterPending({
+    getPostbackRepo,
+    getVisitRepo,
+    resolvePostbackTemplate,
+    resolveVendorFromCampaign,
+    indexPostbackEvent,
+    firePostback,
+  });
 
   return {
     fillTemplate,

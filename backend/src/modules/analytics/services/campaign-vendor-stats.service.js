@@ -1,7 +1,3 @@
-import { getDataSource, getRepository } from '../../../database/index.js';
-import { Visit } from '../../../database/entities/visit.entity.js';
-import { VisitEvent } from '../../../database/entities/visit-event.entity.js';
-import { ConversionPostback, ConversionPostbackStatus } from '../../../database/entities/conversion-postback.entity.js';
 import { campaignsService } from '../../campaigns/campaigns.service.js';
 import { flowEngineService } from '../../flow/core/engine.js';
 import { campaignVendorPerf } from '../../otp/helpers/conversion.js';
@@ -9,25 +5,20 @@ import { normalizeFailureReason } from '../../otp/helpers/failure-reason.js';
 import { resolveFlowOrBoth } from '../../flow/flows/index.js';
 import { resolveConversionRule } from '../../flow/flows/conversion-rule.js';
 import { resolveRangeBounds } from '../../../common/zoned-day.js';
+import {
+  jsonBoolSql,
+  buildVendorClicksQuery,
+  buildVendorEventsQuery,
+  buildVendorPostbacksQuery,
+  buildVendorFailuresQuery,
+} from './vendor-stats-query.builder.js';
 
-const getVisitRepo = () => getRepository(Visit);
-const getVisitEventRepo = () => getRepository(VisitEvent);
-const getPostbackRepo = () => getRepository(ConversionPostback);
-
-export const jsonBoolSql = (columnJsonPath, jsonKey) => {
-  let dbType = 'postgres';
-  try {
-    dbType = getDataSource()?.options?.type || 'postgres';
-  } catch {
-    dbType = 'postgres';
-  }
-  if (dbType === 'postgres') {
-    return `(${columnJsonPath}->>'${jsonKey}') IN ('true', 't', '1')`;
-  }
-  if (dbType === 'sqlite' || dbType === 'better-sqlite3') {
-    return `json_extract(${columnJsonPath}, '$.${jsonKey}') IN (1, 'true', 't')`;
-  }
-  return `JSON_EXTRACT(${columnJsonPath}, '$.${jsonKey}') IN (true, 1, 'true')`;
+export {
+  jsonBoolSql,
+  buildVendorClicksQuery,
+  buildVendorEventsQuery,
+  buildVendorPostbacksQuery,
+  buildVendorFailuresQuery,
 };
 
 export const getCampaignVendorStats = async (campaignId, userId, options = {}) => {
@@ -44,96 +35,23 @@ export const getCampaignVendorStats = async (campaignId, userId, options = {}) =
 
   const { from, to } = resolveRangeBounds(options);
 
-  const clickQB = getVisitRepo()
-    .createQueryBuilder('visit')
-    .select('visit.vendorId', 'vendorId')
-    .addSelect('COUNT(*)', 'clicks')
-    .where('visit.campaignId = :cId', { cId });
-  if (from) clickQB.andWhere('visit.createdAt >= :since', { since: from });
-  if (to) clickQB.andWhere('visit.createdAt <= :until', { until: to });
-  const clickRows = await clickQB.groupBy('visit.vendorId').getRawMany();
+  const clickRows = await buildVendorClicksQuery({ cId, from, to })
+    .groupBy('visit.vendorId')
+    .getRawMany();
 
-  const eventQB = getVisitEventRepo()
-    .createQueryBuilder('event')
-    .innerJoin('event.visit', 'visit')
-    .select('visit.vendorId', 'vendorId')
-    .addSelect(
-      `COALESCE(SUM(CASE WHEN event.eventType = 'OTP_SEND' AND ${successTrue} THEN 1 ELSE 0 END), 0)`,
-      'requested',
-    )
-    .addSelect(
-      `COALESCE(SUM(CASE WHEN event.eventType = 'OTP_VERIFY' AND ${successTrue} THEN 1 ELSE 0 END), 0)`,
-      'liveVerified',
-    )
-    .addSelect(
-      `COALESCE(SUM(CASE WHEN event.eventType = 'OTP_VERIFY' AND ${heldTrue} THEN 1 ELSE 0 END), 0)`,
-      'held',
-    )
-    .addSelect(
-      `COALESCE(SUM(CASE WHEN event.eventType = 'OTP_SEND' AND NOT (${successTrue}) THEN 1 ELSE 0 END), 0)`,
-      'failedSend',
-    )
-    .addSelect(
-      `COALESCE(SUM(CASE WHEN event.eventType = 'OTP_VERIFY' AND NOT (${successTrue}) THEN 1 ELSE 0 END), 0)`,
-      'failedVerify',
-    )
-    .addSelect(
-      `COALESCE(SUM(CASE WHEN event.eventType = 'SUBSCRIBE_SUCCESS' THEN 1 ELSE 0 END), 0)`,
-      'subscribeSuccess',
-    )
-    .addSelect(
-      `COALESCE(SUM(CASE WHEN event.eventType = 'HOME_VIEW' THEN 1 ELSE 0 END), 0)`,
-      'homeView',
-    )
-    .addSelect(
-      `COALESCE(SUM(CASE WHEN event.eventType = 'SUBSCRIBE_CLICK' THEN 1 ELSE 0 END), 0)`,
-      'subscribeClick',
-    )
-    .addSelect(
-      `COALESCE(SUM(CASE WHEN event.eventType = 'CG_REDIRECT' THEN 1 ELSE 0 END), 0)`,
-      'cgRedirect',
-    )
-    // PIN legs for API expose: every attempt, plus distinct MSISDN per leg.
-    .addSelect(
-      `COALESCE(SUM(CASE WHEN event.eventType = 'OTP_SEND' THEN 1 ELSE 0 END), 0)`,
-      'pinRequest',
-    )
-    .addSelect(
-      `COUNT(DISTINCT CASE WHEN event.eventType = 'OTP_SEND' AND ${successTrue} THEN visit.phone END)`,
-      'uniquePinSend',
-    )
-    .addSelect(
-      `COALESCE(SUM(CASE WHEN event.eventType = 'OTP_VERIFY' THEN 1 ELSE 0 END), 0)`,
-      'pinValRequest',
-    )
-    .addSelect(
-      `COUNT(DISTINCT CASE WHEN event.eventType = 'OTP_VERIFY' THEN visit.phone END)`,
-      'uniquePinValRequest',
-    )
-    .addSelect(
-      `COUNT(DISTINCT CASE WHEN event.eventType = 'OTP_VERIFY' AND ${successTrue} THEN visit.phone END)`,
-      'uniquePinVal',
-    )
-    .where('visit.campaignId = :cId', { cId });
-  if (from) eventQB.andWhere('event.createdAt >= :since', { since: from });
-  if (to) eventQB.andWhere('event.createdAt <= :until', { until: to });
-  const eventRows = await eventQB.groupBy('visit.vendorId').getRawMany();
+  const eventRows = await buildVendorEventsQuery({
+    cId,
+    from,
+    to,
+    successTrue,
+    heldTrue,
+  })
+    .groupBy('visit.vendorId')
+    .getRawMany();
 
-  const postbackQB = getPostbackRepo()
-    .createQueryBuilder('p')
-    .select('p.vendorId', 'vendorId')
-    .addSelect(
-      `COALESCE(SUM(CASE WHEN p.status IN ('${ConversionPostbackStatus.RECEIVED}', '${ConversionPostbackStatus.SENT}') THEN 1 ELSE 0 END), 0)`,
-      'postbacksMatched',
-    )
-    .addSelect(
-      `COALESCE(SUM(CASE WHEN p.status = '${ConversionPostbackStatus.SENT}' THEN 1 ELSE 0 END), 0)`,
-      'postbacksSent',
-    )
-    .where('p.campaignId = :cId', { cId });
-  if (from) postbackQB.andWhere('p.createdAt >= :since', { since: from });
-  if (to) postbackQB.andWhere('p.createdAt <= :until', { until: to });
-  const postbackRows = await postbackQB.groupBy('p.vendorId').getRawMany();
+  const postbackRows = await buildVendorPostbacksQuery({ cId, from, to })
+    .groupBy('p.vendorId')
+    .getRawMany();
 
   const statsByVendor = new Map();
   const emptyStats = () => ({
@@ -187,18 +105,12 @@ export const getCampaignVendorStats = async (campaignId, userId, options = {}) =
     prev.cgRedirect = Number(row.cgRedirect) || 0;
   }
 
-  const failedQB = getVisitEventRepo()
-    .createQueryBuilder('event')
-    .innerJoin('event.visit', 'visit')
-    .select('visit.vendorId', 'vendorId')
-    .addSelect('event.eventType', 'eventType')
-    .addSelect('event.metadata', 'metadata')
-    .where('visit.campaignId = :cId', { cId })
-    .andWhere(`event.eventType IN ('OTP_VERIFY', 'OTP_SEND')`)
-    .andWhere(`NOT (${successTrue})`);
-  if (from) failedQB.andWhere('event.createdAt >= :since', { since: from });
-  if (to) failedQB.andWhere('event.createdAt <= :until', { until: to });
-  const failedRows = await failedQB.getRawMany();
+  const failedRows = await buildVendorFailuresQuery({
+    cId,
+    from,
+    to,
+    successTrue,
+  }).getRawMany();
 
   for (const r of failedRows) {
     const vid = Number(r.vendorId ?? r.visit_vendor_id ?? r.vendor_id) || 0;
