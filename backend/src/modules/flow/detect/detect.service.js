@@ -1,22 +1,31 @@
-import {
-  pageTypeForSubscriptionStatus,
-} from '../../../database/entities/campaign-page.entity.js';
-import { partnerApiService } from '../partner-api.service.js';
+/**
+ * MSISDN Detection & Traffic Ingestion Orchestrator
+ *
+ * Safe, backward-compatible Facade delegating to specialized detection helpers:
+ * - detect/detect-capping.helper: Campaign capping verification and fallback redirection
+ * - detect/detect-landing.helper: Early Landing CG redirect handling & browser client HE response
+ * - detect/detect-partner-check.helper: Partner subscriber checksub and blocklist querying
+ * - detect/detect-redirect-resolver: Multi-hop next-page resolution, packs-on-home routing & audit logs
+ */
+
 import { analyticsService } from '../../analytics/analytics.service.js';
 import { redisService } from '../../../common/services/redis.service.js';
 import { splitDualCampids } from '../../markets/helpers/tracking-id.util.js';
 import { heService } from '../he.service.js';
-import { apiCallLogService } from '../api-call-log.service.js';
-import { ApiCallType } from '../../../database/entities/api-call-log.entity.js';
 import { flowEngineService } from '../core/engine.js';
 import { shouldRunHeOnDetect } from './he-gate.js';
+import { evaluateDetectCapping } from './detect-capping.helper.js';
 import {
-  isPacksOnHome,
-  resolvePacksOnHomeNoPhone,
-} from '../routing/funnel-layout.js';
-import { recordCgRedirectHop } from '../helpers/cg-redirect-log.js';
-import { wapBlockedError } from '../flows/index.js';
-import { cappingService } from '../../campaigns/capping.service.js';
+  handleEarlyLandingCg,
+  handleNeedsClientHe,
+} from './detect-landing.helper.js';
+import { executePartnerChecks } from './detect-partner-check.helper.js';
+import {
+  resolveDetectRedirects,
+  logDetectRedirectDecision,
+  createHeRedirectVars,
+  buildDetectResult,
+} from './detect-redirect-resolver.js';
 
 export function createDetectMsisdn(deps) {
   const {
@@ -34,55 +43,8 @@ export function createDetectMsisdn(deps) {
     const hintPhone = heService.normalizePhone(input.phone || '');
     const campaign = await resolveCampaign(input).catch(() => null);
 
-    if (campaign) {
-      const flowConfig = flowEngineService.parseFlowConfig(campaign.flowConfig);
-      if (flowEngineService.isApiExposeFlow(flowConfig)) {
-        throw wapBlockedError(
-          flowEngineService.normalizeMode(campaign.verificationMode),
-        );
-      }
-
-      const cappingResult = await cappingService.evaluateCapping(campaign, {
-        vid: input.vid,
-        vendorId: input.vendorId,
-      });
-
-      if (cappingResult.isCapped) {
-        if (cappingResult.action === 'fallback' && cappingResult.targetCampaign) {
-          const target = cappingResult.targetCampaign;
-          const targetCountry =
-            target.marketOperator?.country?.code || target.country;
-          const targetOperator =
-            target.marketOperator?.name || target.operator;
-
-          const queryParams = new URLSearchParams();
-          if (targetCountry) queryParams.set('country', targetCountry);
-          if (targetOperator) queryParams.set('operator', targetOperator);
-          queryParams.set('campid', String(target.id));
-          if (input.vid) queryParams.set('vid', input.vid);
-          if (input.affId) queryParams.set('aff_id', input.affId);
-          if (input.clickId) queryParams.set('click_id', input.clickId);
-          if (input.rcid) queryParams.set('rcid', input.rcid);
-          if (input.pack) queryParams.set('pack', input.pack);
-
-          const fallbackUrl = `/subscription?${queryParams.toString()}`;
-          return {
-            phone: '',
-            msisdn: '',
-            detected: false,
-            nextPage: 'HOME',
-            heError: 'OFFER_CAPPED_REDIRECT',
-            failRedirectUrl: fallbackUrl,
-            successRedirectUrl: fallbackUrl,
-          };
-        }
-
-        const err = new Error('This offer has been stopped');
-        err.statusCode = 403;
-        err.code = 'OFFER_STOPPED';
-        throw err;
-      }
-    }
+    const cappedRedirect = await evaluateDetectCapping(campaign, input);
+    if (cappedRedirect) return cappedRedirect;
 
     let apiConfig = null;
     let serviceId = campaign?.serviceId || '';
@@ -125,60 +87,16 @@ export function createDetectMsisdn(deps) {
     const verificationMode =
       flowEngineService.normalizeMode(campaign?.verificationMode) || 'BOTH';
 
-    // NONE: leave to CG on detect so Session Detail has CG_REDIRECT even if
-    // /page never runs, and the browser never paints HOME.
-    if (
-      campaign &&
-      visitCtx.visitId &&
-      typeof maybeNullFlowCgRedirect === 'function' &&
-      flowEngineService.isLandingCgRedirectMode(verificationMode)
-    ) {
-      const landingCg = await maybeNullFlowCgRedirect(
-        campaign,
-        visitCtx.visitId,
-        input,
-        { when: 'landing' },
-      );
-      if (landingCg) {
-        await recordCgRedirectHop({
-          visitId: visitCtx.visitId,
-          campaign,
-          redirectUrl: landingCg,
-          trigger: 'landing',
-        });
-        const result = {
-          phone: '',
-          hasMsisdn: false,
-          subscribed: false,
-          isActive: false,
-          subscriptionStatus: null,
-          blocked: false,
-          blockReason: null,
-          heProvider: 'none',
-          heError: null,
-          nextPage: null,
-          failRedirectUrl: null,
-          successRedirectUrl: null,
-          cgRedirectUrl: campaign.cgRedirectUrl || null,
-          externalRedirect: landingCg,
-          verificationMode,
-          country: input.country || campaign.country,
-          operator: input.operator || campaign.operator,
-          campaignId: campaign.id || null,
-          visitId: visitCtx.visitId,
-          clickId: visitCtx.clickId,
-          rcid: visitCtx.rcid,
-        };
-        if (isFlowCacheEnabled()) {
-          await redisService.set(
-            `flow:detect:result:${visitCtx.visitId}`,
-            result,
-            60,
-          );
-        }
-        return result;
-      }
-    }
+    // Early landing CG hop for NONE verification mode
+    const landingCgResult = await handleEarlyLandingCg({
+      campaign,
+      visitCtx,
+      input,
+      maybeNullFlowCgRedirect,
+      isFlowCacheEnabled,
+      verificationMode,
+    });
+    if (landingCgResult) return landingCgResult;
 
     const flowConfigForStart = campaign
       ? flowEngineService.parseFlowConfig(campaign.flowConfig)
@@ -187,20 +105,15 @@ export function createDetectMsisdn(deps) {
       flowConfigForStart,
       verificationMode,
     );
-    const configuredHeProvider = String(
-      apiConfig?.heProvider || 'header',
-    )
+    const configuredHeProvider = String(apiConfig?.heProvider || 'header')
       .toLowerCase()
       .trim();
-    // OTP_ONLY / NONE never run HE. Also skip when heProvider is explicitly `none`
-    // or START node disabled runHe.
+
     const runHe =
       shouldRunHeOnDetect(verificationMode, startConfig) &&
       configuredHeProvider !== 'none';
 
-    const heSource = String(input.heSource || '')
-      .toLowerCase()
-      .trim();
+    const heSource = String(input.heSource || '').toLowerCase().trim();
 
     if (apiConfig && runHe) {
       heMeta = await heService.resolve(apiConfig, {
@@ -229,65 +142,22 @@ export function createDetectMsisdn(deps) {
       : 'none';
 
     const dualIds = splitDualCampids(input);
-    const ourClickId = String(visitCtx.clickId || '').trim();
-    const heRedirectVarsFor = (msisdn = '') => ({
-      msisdn: msisdn || '',
-      phone: msisdn || '',
-      country: input.country || campaign?.country || '',
-      operator: input.operator || campaign?.operator || '',
-      click_id: ourClickId,
-      clickId: ourClickId,
-      rcid: String(visitCtx.rcid || '').trim(),
-      campid: String(dualIds.vendorCampid || input.campid || '').trim(),
-      tracking_campid: String(
-        dualIds.trackingCampid || input.trackingCampid || '',
-      ).trim(),
-    });
+    const heRedirectVarsFor = (msisdn = '') =>
+      createHeRedirectVars({ msisdn, input, campaign, visitCtx, dualIds });
 
-    // Safaricom masked MSISDN must run in the browser (carrier HE path).
-    // Hand config back to the client — do not cache / fail-redirect yet.
     if (runHe && heMeta?.needsClientHe) {
-      let rawFail = String(heMeta.failRedirectUrl || '').trim();
-      if (!rawFail && isApiHeProvider(heProviderResolved)) {
-        rawFail = String(campaign?.cgRedirectUrl || '').trim();
-      }
-      const heRedirectVars = heRedirectVarsFor('');
-      const failRedirectUrl = rawFail
-        ? applyHeRedirectVars(rawFail, heRedirectVars) || rawFail
-        : '';
-      const successRedirectUrl = heMeta.successRedirectUrl
-        ? applyHeRedirectVars(heMeta.successRedirectUrl, heRedirectVars) ||
-          heMeta.successRedirectUrl
-        : '';
-
-      return {
-        phone: '',
-        hasMsisdn: false,
-        subscribed: false,
-        isActive: false,
-        subscriptionStatus: null,
-        blocked: false,
-        blockReason: null,
-        heProvider: heProviderResolved,
-        heError: null,
-        needsClientHe: true,
-        heClientConfig: heMeta.clientConfig || null,
-        nextPage: null,
-        failRedirectUrl: failRedirectUrl || null,
-        successRedirectUrl: successRedirectUrl || null,
-        cgRedirectUrl: campaign?.cgRedirectUrl || null,
-        country: input.country || campaign?.country,
-        operator: input.operator || campaign?.operator,
-        campaignId: campaign?.id || null,
-        visitId: visitCtx.visitId,
-        clickId: visitCtx.clickId,
-        rcid: visitCtx.rcid,
-      };
+      return handleNeedsClientHe({
+        heMeta,
+        heProviderResolved,
+        campaign,
+        isApiHeProvider,
+        applyHeRedirectVars,
+        heRedirectVarsFor,
+        input,
+        visitCtx,
+      });
     }
 
-    // Token/API HE: only MSISDN from partner APIs counts — not query/header fallback.
-    // OTP_ONLY / NONE / heProvider=none: never adopt header/query hint as MSISDN.
-    // Browser Safaricom HE: phone arrives via heSource=browser + msisdn.
     let rawPhone = '';
     if (!runHe) {
       rawPhone = '';
@@ -297,46 +167,29 @@ export function createDetectMsisdn(deps) {
       rawPhone = heService.normalizePhone(heMeta.phone || hintPhone || '');
     }
 
-    let subscribed = false;
-    let subscriptionStatus = null;
-    let isActive = false;
-    let blocked = false;
-    let blockReason = null;
-    /** @type {{ go?: string|null, page?: string|null, url?: string|null } | null} */
-    let subRes = null;
-    const hasChecksub =
-      Boolean(apiConfig?.subscriptionApi) && startConfig.runChecksub !== false;
-    const hasBlocklist =
-      Boolean(apiConfig?.blocklistApi) && startConfig.runBlocklist !== false;
+    let partnerChecks = {
+      hasChecksub: false,
+      hasBlocklist: false,
+      subRes: null,
+      subscribed: false,
+      isActive: false,
+      subscriptionStatus: null,
+      blocked: false,
+      blockReason: null,
+    };
 
-    // Phone mila → checksub + blocklist (only when configured + START allows).
-    if (rawPhone && apiConfig && (hasChecksub || hasBlocklist)) {
-      const partnerCtx = {
-        phone: rawPhone,
-        serviceId,
-        country: input.country || campaign?.country,
-        operator: input.operator || campaign?.operator,
-        ...attrCtx,
-      };
-      const [checksubResult, blockRes] = await Promise.all([
-        hasChecksub
-          ? partnerApiService
-              .checkSubscription(apiConfig, partnerCtx)
-              .catch(() => null)
-          : Promise.resolve(null),
-        hasBlocklist
-          ? partnerApiService
-              .checkBlocked(apiConfig, partnerCtx)
-              .catch(() => ({ blocked: false }))
-          : Promise.resolve({ blocked: false }),
-      ]);
-
-      subRes = checksubResult;
-      subscribed = Boolean(subRes?.shouldSkipSubscribe);
-      isActive = Boolean(subRes?.isActive);
-      subscriptionStatus = subRes?.status || null;
-      blocked = Boolean(blockRes?.blocked);
-      blockReason = blockRes?.reason || null;
+    if (rawPhone && apiConfig) {
+      partnerChecks = await executePartnerChecks(
+        apiConfig,
+        {
+          phone: rawPhone,
+          serviceId,
+          country: input.country || campaign?.country,
+          operator: input.operator || campaign?.operator,
+          ...attrCtx,
+        },
+        startConfig,
+      );
     }
 
     if (rawPhone && visitCtx.visitId) {
@@ -345,12 +198,7 @@ export function createDetectMsisdn(deps) {
         .catch(() => {});
     }
 
-    // HE success/fail: fill placeholders already in the URL ({click_id}, {msisdn},
-    // …). Never auto-append click_id / campid / rcid query params.
     const heRedirectVars = heRedirectVarsFor(rawPhone);
-
-    // Fail redirect: explicit heConfig.failRedirectUrl, else campaign CG URL
-    // when using token/API HE (so OTP-only campaigns with a CG field are untouched).
     let rawFail = String(heMeta.failRedirectUrl || '').trim();
     if (!rawPhone && !rawFail && isApiHeProvider(heProviderResolved)) {
       rawFail = String(campaign?.cgRedirectUrl || '').trim();
@@ -365,18 +213,10 @@ export function createDetectMsisdn(deps) {
         heMeta.successRedirectUrl
       : '';
 
-    const mappedStatusPage =
-      subRes?.go === 'page' && subRes?.page
-        ? subRes.page
-        : pageTypeForSubscriptionStatus(subscriptionStatus, isActive);
-    const normalizedStatus = String(subscriptionStatus || '')
-      .trim()
-      .toLowerCase();
-    const isNewStatus =
-      subRes?.go === 'continue' || normalizedStatus === 'new';
     const ruleExternalUrl =
-      subRes?.go === 'external' && subRes?.url
-        ? applyHeRedirectVars(subRes.url, heRedirectVars) || subRes.url
+      partnerChecks.subRes?.go === 'external' && partnerChecks.subRes?.url
+        ? applyHeRedirectVars(partnerChecks.subRes.url, heRedirectVars) ||
+          partnerChecks.subRes.url
         : null;
 
     let campaignSuccessRedirectUrl = null;
@@ -388,179 +228,56 @@ export function createDetectMsisdn(deps) {
       );
     }
 
-    let nextPage = null;
-    let outboundFailRedirectUrl = failRedirectUrl || null;
-    let outboundSuccessRedirectUrl = successRedirectUrl || null;
-
-    if (rawPhone && hasBlocklist && blocked) {
-      nextPage = 'BLOCKED';
-      outboundSuccessRedirectUrl = null;
-      outboundFailRedirectUrl = null;
-    } else if (rawPhone && hasChecksub) {
-      if (ruleExternalUrl) {
-        outboundSuccessRedirectUrl = ruleExternalUrl;
-        outboundFailRedirectUrl = null;
-        nextPage = null;
-      } else if (isActive) {
-        outboundSuccessRedirectUrl = campaignSuccessRedirectUrl || null;
-        if (!outboundSuccessRedirectUrl) {
-          nextPage = 'THANKYOU';
-        }
-      } else if (isNewStatus) {
-        outboundSuccessRedirectUrl = successRedirectUrl || null;
-        outboundFailRedirectUrl = null;
-        if (!outboundSuccessRedirectUrl && isPacksOnHome(campaign)) {
-          const afterHe = flowEngineService.nextPage(
-            flowConfigForStart,
-            'HOME',
-            'HEADER_RESOLVED',
-          );
-          nextPage = afterHe === 'THANKYOU' ? 'THANKYOU' : 'HOME';
-        }
-      } else if (mappedStatusPage) {
-        outboundSuccessRedirectUrl = null;
-        nextPage = mappedStatusPage;
-        outboundFailRedirectUrl = null;
-      } else {
-        outboundSuccessRedirectUrl = null;
-        outboundFailRedirectUrl = null;
-      }
-    } else if (rawPhone && !hasChecksub) {
-      // No checksub configured — legacy: phone + HE success URL.
-      outboundSuccessRedirectUrl = successRedirectUrl || null;
-    }
-
-    // Log redirect decision against the same visit (visible in Session Detail).
-    let redirectOutcome = 'stay';
-    let redirectUrl = null;
-    if (rawPhone && nextPage === 'BLOCKED') {
-      redirectOutcome = 'blocked';
-    } else if (rawPhone && nextPage) {
-      redirectOutcome = String(nextPage).toLowerCase();
-    } else if (rawPhone && outboundSuccessRedirectUrl) {
-      redirectOutcome = ruleExternalUrl
-        ? 'checksub_external'
-        : isActive
-          ? 'campaign_success'
-          : 'he_success';
-      redirectUrl = outboundSuccessRedirectUrl;
-    } else if (
-      !rawPhone &&
-      outboundFailRedirectUrl &&
-      isApiHeProvider(heProviderResolved)
-    ) {
-      redirectOutcome = 'fail';
-      redirectUrl = outboundFailRedirectUrl;
-    }
-
-    // packs_on_home identity matrix (no MSISDN): HE-only → ERROR + fail URL;
-    // OTP-only / BOTH → OTP (do not fail-redirect).
-    if (!rawPhone && isPacksOnHome(campaign)) {
-      const landing = resolvePacksOnHomeNoPhone(verificationMode);
-      if (landing.nextPage) {
-        nextPage = landing.nextPage;
-      }
-      if (landing.useFailRedirect) {
-        if (!outboundFailRedirectUrl) {
-          const cgFail = String(campaign?.cgRedirectUrl || '').trim();
-          outboundFailRedirectUrl = cgFail
-            ? applyHeRedirectVars(cgFail, heRedirectVars) || cgFail
-            : null;
-        }
-        if (outboundFailRedirectUrl) {
-          redirectOutcome = 'fail';
-          redirectUrl = outboundFailRedirectUrl;
-        } else {
-          redirectOutcome = 'error';
-          redirectUrl = null;
-        }
-      } else {
-        outboundFailRedirectUrl = null;
-        redirectOutcome = landing.nextPage
-          ? String(landing.nextPage).toLowerCase()
-          : 'stay';
-        redirectUrl = null;
-      }
-    }
-
-    // OTP_ONLY / NONE: no HE attempt → no he_redirect noise in Session Detail.
-    // Conversion rows are created on operator /callback (received), not on HE.
-    if (runHe && (visitCtx.visitId || campaign?.id)) {
-      try {
-        await apiCallLogService.record({
-          visitId: visitCtx.visitId,
-          campaignId: campaign?.id,
-          msisdn: rawPhone || null,
-          rcid: visitCtx.rcid,
-          clickId: visitCtx.clickId,
-          callType: ApiCallType.HE_REDIRECT,
-          requestUrl: redirectUrl,
-          requestBody: JSON.stringify({
-            outcome: redirectOutcome,
-            heProvider: heProviderResolved,
-            heError: heMeta.error || null,
-            subscriptionStatus: subscriptionStatus || null,
-            isActive,
-            blocked,
-            blockReason,
-            nextPage,
-            verificationMode,
-          }),
-          responseStatus: null,
-          responseBody: null,
-          success:
-            redirectOutcome === 'he_success' ||
-            redirectOutcome === 'campaign_success'
-              ? true
-              : redirectOutcome === 'fail'
-                ? false
-                : null,
-          errorMessage:
-            redirectOutcome === 'fail' ? heMeta.error || null : null,
-          statusLabel:
-            redirectOutcome === 'he_success'
-              ? 'HE_SUCCESS'
-              : redirectOutcome === 'campaign_success'
-                ? 'CAMPAIGN_SUCCESS'
-                : redirectOutcome === 'fail'
-                  ? 'FAILED'
-                  : redirectOutcome === 'blocked'
-                    ? 'BLOCKED'
-                    : nextPage
-                      ? String(nextPage).toUpperCase()
-                      : 'STAY',
-        });
-      } catch (err) {
-        console.warn(`he_redirect log failed: ${err.message}`);
-      }
-    }
-
-    if (!rawPhone) {
-      outboundSuccessRedirectUrl = null;
-    }
-
-    const result = {
-      phone: rawPhone,
-      hasMsisdn: Boolean(rawPhone),
-      subscribed,
-      isActive,
-      subscriptionStatus,
-      blocked,
-      blockReason,
-      heProvider: heProviderResolved,
-      heError: heMeta.error || null,
-      nextPage,
-      failRedirectUrl: outboundFailRedirectUrl || null,
-      successRedirectUrl: outboundSuccessRedirectUrl || null,
-      cgRedirectUrl: campaign?.cgRedirectUrl || null,
+    const redirectResolution = resolveDetectRedirects({
+      rawPhone,
+      hasBlocklist: partnerChecks.hasBlocklist,
+      blocked: partnerChecks.blocked,
+      hasChecksub: partnerChecks.hasChecksub,
+      subRes: partnerChecks.subRes,
+      isActive: partnerChecks.isActive,
+      subscriptionStatus: partnerChecks.subscriptionStatus,
+      ruleExternalUrl,
+      campaignSuccessRedirectUrl,
+      successRedirectUrl,
+      failRedirectUrl,
+      campaign,
+      flowConfigForStart,
       verificationMode,
-      country: input.country || campaign?.country,
-      operator: input.operator || campaign?.operator,
-      campaignId: campaign?.id || null,
+      isApiHeProviderResolved: isApiHeProvider(heProviderResolved),
+      applyHeRedirectVars,
+      heRedirectVars,
+    });
+
+    await logDetectRedirectDecision({
+      runHe,
       visitId: visitCtx.visitId,
-      clickId: visitCtx.clickId,
+      campaignId: campaign?.id,
+      rawPhone,
       rcid: visitCtx.rcid,
-    };
+      clickId: visitCtx.clickId,
+      redirectUrl: redirectResolution.redirectUrl,
+      redirectOutcome: redirectResolution.redirectOutcome,
+      heProviderResolved,
+      heMeta,
+      subscriptionStatus: partnerChecks.subscriptionStatus,
+      isActive: partnerChecks.isActive,
+      blocked: partnerChecks.blocked,
+      blockReason: partnerChecks.blockReason,
+      nextPage: redirectResolution.nextPage,
+      verificationMode,
+    });
+
+    const result = buildDetectResult({
+      rawPhone,
+      partnerChecks,
+      heProviderResolved,
+      heMeta,
+      redirectResolution,
+      campaign,
+      verificationMode,
+      input,
+      visitCtx,
+    });
 
     if (visitCtx.visitId && isFlowCacheEnabled()) {
       await redisService.set(

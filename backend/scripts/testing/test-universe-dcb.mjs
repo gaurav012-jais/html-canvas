@@ -116,3 +116,5 @@ assert.strictEqual(parsedBody.action, 'config');
 console.log('✅ callProviderWithLogging passed');
 
 console.log('ALL DCB UNIT TESTS PASSED SUCCESSFULLY!');
+process.exit(0);
+

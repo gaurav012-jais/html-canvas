@@ -32,14 +32,14 @@ export {
  * Creates the consolidated OTP service instance.
  */
 export const createOtpService = () => ({
-  sendOtp,
-  verifyOtp,
-  exposeChecksub,
-  exposeSendOtp,
-  exposeVerifyOtp,
-  isRateLimited,
-  isBruteForceAttempt,
-  isVisitOtpVerified,
+  sendOtp: (...args) => sendOtp(...args),
+  verifyOtp: (...args) => verifyOtp(...args),
+  exposeChecksub: (...args) => exposeChecksub(...args),
+  exposeSendOtp: (...args) => exposeSendOtp(...args),
+  exposeVerifyOtp: (...args) => exposeVerifyOtp(...args),
+  isRateLimited: (...args) => isRateLimited(...args),
+  isBruteForceAttempt: (...args) => isBruteForceAttempt(...args),
+  isVisitOtpVerified: (...args) => isVisitOtpVerified(...args),
 });
 
 export const otpService = createOtpService();
