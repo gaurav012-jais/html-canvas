@@ -30,6 +30,24 @@ export function LogsFunnelCompare({
   funnelCompareData,
   funnelBarData,
 }) {
+  const firstKey = selectedSeries?.[0]?.key
+  const firstTotal = Number(funnelTotals?.[firstKey]) || 0
+  const totalsList = Array.isArray(funnelTotals)
+    ? funnelTotals
+    : (selectedSeries || []).map((s, idx) => {
+        const total = Number(funnelTotals?.[s.key]) || 0
+        const conversionFromFirst =
+          idx > 0 && firstTotal > 0
+            ? ((total / firstTotal) * 100).toFixed(1)
+            : null
+        return {
+          key: s.key,
+          label: s.label,
+          total,
+          conversionFromFirst,
+        }
+      })
+
   return (
     <>
       <SectionCard
@@ -92,15 +110,15 @@ export function LogsFunnelCompare({
           </div>
 
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-2">
-            {funnelTotals.map((item) => (
+            {totalsList.map((item) => (
               <div key={item.key} className="bg-gray-50/80 rounded-xl p-3 border border-gray-100">
                 <div className="text-[11px] font-medium text-gray-500 truncate" title={item.label}>
                   {item.label}
                 </div>
-                <div className="text-xl font-bold text-gray-900 mt-1">{item.total.toLocaleString()}</div>
+                <div className="text-xl font-bold text-gray-900 mt-1">{(item.total || 0).toLocaleString()}</div>
                 {item.conversionFromFirst != null && (
                   <div className="text-[11px] text-gray-400 mt-0.5">
-                    {item.conversionFromFirst}% of {funnelTotals[0]?.label}
+                    {item.conversionFromFirst}% of {totalsList[0]?.label}
                   </div>
                 )}
               </div>

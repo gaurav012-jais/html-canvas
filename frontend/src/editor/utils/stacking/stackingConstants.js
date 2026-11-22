@@ -156,8 +156,3 @@ export function applyCoverFullToEl(el) {
   el.style.boxSizing = 'border-box'
   el.setAttribute('data-tc-cover-full', '1')
 }
-
-export {
-  OVERLAY_STACKING_CANVAS_CSS,
-  OVERLAY_STACKING_CSS,
-} from './stackingStyles'

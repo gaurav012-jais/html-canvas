@@ -4,6 +4,7 @@ import {
   ArrowLeft,
   ChevronLeft,
   ChevronRight,
+  Clock,
   FileText,
   RefreshCw,
   FileDown,

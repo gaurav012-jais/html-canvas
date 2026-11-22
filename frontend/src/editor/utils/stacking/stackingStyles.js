@@ -1,4 +1,6 @@
-import { Z_IMAGE, Z_OVERLAY, Z_HOTSPOT } from './stackingConstants'
+export const Z_IMAGE = 1
+export const Z_OVERLAY = 40
+export const Z_HOTSPOT = 50
 
 /**
  * Editor canvas CSS — stacking only, NO position:!important

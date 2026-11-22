@@ -22,9 +22,12 @@ export {
   ensureImageLayout,
   coverFullBox,
   applyCoverFullToEl,
+} from './stacking/stackingConstants'
+
+export {
   OVERLAY_STACKING_CANVAS_CSS,
   OVERLAY_STACKING_CSS,
-} from './stacking/stackingConstants'
+} from './stacking/stackingStyles'
 
 export {
   directChildImageEl,

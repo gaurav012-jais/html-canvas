@@ -4,258 +4,182 @@ import { Search, Plus, ChevronRight, Globe, Pencil } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 import AppShell from '../components/ui/AppShell'
 import Button from '../components/ui/Button'
+import Input from '../components/ui/Input'
 import EmptyState from '../components/ui/EmptyState'
-import useStore from '../store/useStore'
-import * as marketsApi from '../services/api/markets'
 import { CreateMarketModal, EditMarketModal } from './markets/MarketModals'
-import { MarketCard } from './markets/MarketCard'
+import * as marketsApi from '../services/api/markets'
 
 function MarketsPage() {
   const navigate = useNavigate()
-  const { user } = useAuth()
+  const { user, isAuthenticated, loading: authLoading } = useAuth()
   const canManageMarkets = user?.role === 'SUPERADMIN' || user?.role === 'ADMIN'
-  const campaigns = useStore((s) => s.campaigns)
-  const fetchCampaigns = useStore((s) => s.fetchCampaigns)
-  const addToast = useStore((s) => s.addToast)
 
   const [markets, setMarkets] = useState([])
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState(null)
   const [search, setSearch] = useState('')
-  const [createOpen, setCreateOpen] = useState(false)
+  const [showCreate, setShowCreate] = useState(false)
   const [editingMarket, setEditingMarket] = useState(null)
 
-  const loadData = useCallback(async () => {
-    setLoading(true)
-    setError(null)
+  const loadMarkets = useCallback(async () => {
     try {
-      const [mkts] = await Promise.all([
-        marketsApi.listMarkets(),
-        fetchCampaigns().catch(() => []),
-      ])
-      setMarkets(mkts || [])
-    } catch (err) {
-      setError(err.message || 'Failed to load markets')
+      setLoading(true)
+      const data = await marketsApi.listMarkets()
+      setMarkets(data || [])
+    } catch {
+      // toast shown by service/interceptor
     } finally {
       setLoading(false)
     }
-  }, [fetchCampaigns])
+  }, [])
 
   useEffect(() => {
-    loadData()
-  }, [loadData])
-
-  const countsByKey = useMemo(() => {
-    const map = new Map()
-    for (const c of campaigns || []) {
-      const cc = (c.country || '').trim().toUpperCase()
-      const op = (c.operator || '').trim().toUpperCase()
-      if (!cc || !op) continue
-      const k = `${cc}:${op}`
-      const cur = map.get(k) || { total: 0, active: 0 }
-      cur.total += 1
-      if (c.active) cur.active += 1
-      map.set(k, cur)
-    }
-    return map
-  }, [campaigns])
-
-  const rows = useMemo(() => {
-    return markets.map((m) => {
-      const k = `${(m.countryCode || '').toUpperCase()}:${(m.operatorCode || '').toUpperCase()}`
-      const c = countsByKey.get(k) || { total: 0, active: 0 }
-      return {
-        ...m,
-        campaignCount: c.total,
-        activeCampaignCount: c.active,
-      }
-    })
-  }, [markets, countsByKey])
+    loadMarkets()
+  }, [loadMarkets])
 
   const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase()
-    if (!q) return rows
-    return rows.filter((m) => {
-      return (
-        m.countryName?.toLowerCase().includes(q) ||
-        m.countryCode?.toLowerCase().includes(q) ||
-        m.operatorName?.toLowerCase().includes(q) ||
-        m.operatorCode?.toLowerCase().includes(q)
-      )
-    })
-  }, [rows, search])
+    if (!search.trim()) return markets
+    const q = search.toLowerCase()
+    return markets.filter(
+      (m) =>
+        m.countryName.toLowerCase().includes(q) ||
+        m.countryCode.toLowerCase().includes(q) ||
+        m.operatorName.toLowerCase().includes(q) ||
+        m.operatorCode.toLowerCase().includes(q),
+    )
+  }, [markets, search])
 
-  const grouped = useMemo(() => {
-    const map = new Map()
-    for (const m of filtered) {
-      const cc = m.countryCode || 'OTHER'
-      if (!map.has(cc)) {
-        map.set(cc, {
-          countryCode: cc,
-          countryName: m.countryName || cc,
-          markets: [],
-        })
-      }
-      map.get(cc).markets.push(m)
-    }
-    return Array.from(map.values()).sort((a, b) => a.countryName.localeCompare(b.countryName))
-  }, [filtered])
+  const pageActions = canManageMarkets ? (
+    <Button variant="primary" size="sm" onClick={() => setShowCreate(true)}>
+      <Plus className="w-4 h-4" />
+      New market
+    </Button>
+  ) : null
 
-  const totalCampaigns = useMemo(
-    () => rows.reduce((acc, r) => acc + r.campaignCount, 0),
-    [rows],
-  )
-  const activeCampaigns = useMemo(
-    () => rows.reduce((acc, r) => acc + r.activeCampaignCount, 0),
-    [rows],
-  )
-
-  const handleCreated = (market) => {
-    setMarkets((prev) => {
-      const exists = prev.some(
-        (m) =>
-          m.countryCode === market.countryCode && m.operatorCode === market.operatorCode,
-      )
-      return exists ? prev : [...prev, market]
-    })
-  }
-
-  const handleUpdated = (updated) => {
-    setMarkets((prev) =>
-      prev.map((m) =>
-        m.countryCode === updated.countryCode && m.operatorCode === updated.operatorCode
-          ? { ...m, ...updated }
-          : m,
-      ),
+  if (authLoading) {
+    return (
+      <AppShell>
+        <div className="page-container flex items-center justify-center min-h-[50vh]">
+          <p className="text-fg-muted text-sm">Loading...</p>
+        </div>
+      </AppShell>
     )
   }
 
   return (
-    <AppShell
-      actions={
-        canManageMarkets && (
-          <Button variant="primary" size="sm" onClick={() => setCreateOpen(true)}>
-            <Plus className="w-4 h-4" />
-            New market
-          </Button>
-        )
-      }
-    >
-      <div className="page-container space-y-6">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-          <div>
-            <h1 className="page-title">Markets</h1>
-            <p className="page-subtitle">
-              Browse campaigns organized by country and mobile operator.
-            </p>
-          </div>
-          <div className="flex items-center gap-3 text-xs text-fg-muted font-medium bg-bg-surface border border-border rounded-lg px-3 py-2 self-start sm:self-auto">
-            <span>
-              <strong className="text-fg tabular-nums">{markets.length}</strong>{' '}
-              {markets.length === 1 ? 'market' : 'markets'}
-            </span>
-            <span className="text-border-strong">•</span>
-            <span>
-              <strong className="text-fg tabular-nums">{totalCampaigns}</strong>{' '}
-              {totalCampaigns === 1 ? 'campaign' : 'campaigns'}
-            </span>
-            <span className="text-border-strong">•</span>
-            <span className="text-emerald-600 font-semibold">
-              <strong className="tabular-nums">{activeCampaigns}</strong> active
-            </span>
-          </div>
+    <AppShell actions={pageActions}>
+      <div className="page-container">
+        <div className="page-header">
+          <h1 className="page-header-title">Markets</h1>
+          <p className="page-header-description">
+            Browse countries and operators, then manage campaigns under each market
+          </p>
         </div>
 
-        <div className="flex items-center gap-3">
-          <div className="relative flex-1 max-w-md">
-            <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-fg-muted pointer-events-none" />
-            <input
+        <div className="mb-4">
+          <div className="relative max-w-sm">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-fg-subtle" />
+            <Input
               type="text"
+              placeholder="Search by country or operator..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Filter by country, operator, or code..."
-              className="w-full pl-9 pr-3 py-2 text-sm rounded-lg border border-border bg-bg-surface text-fg placeholder:text-fg-muted focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-colors"
+              className="pl-9"
             />
           </div>
-          {search && (
-            <button
-              onClick={() => setSearch('')}
-              className="text-xs text-fg-muted hover:text-fg font-medium"
-            >
-              Clear
-            </button>
-          )}
         </div>
 
         {loading ? (
-          <div className="py-16 text-center text-sm text-fg-muted">Loading markets...</div>
-        ) : error ? (
-          <div className="p-4 rounded-lg bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900 text-sm text-red-700 dark:text-red-300">
-            {error}
-          </div>
+          <div className="surface-card p-12 text-center text-fg-muted text-sm">Loading markets...</div>
         ) : filtered.length === 0 ? (
-          <EmptyState
-            icon={Globe}
-            title={search ? 'No matching markets' : 'No markets yet'}
-            description={
-              search
-                ? `No markets match "${search}". Try another filter.`
-                : 'Markets group campaigns by country and carrier operator.'
-            }
-            action={
-              canManageMarkets &&
-              !search && (
-                <Button variant="primary" size="sm" onClick={() => setCreateOpen(true)}>
-                  <Plus className="w-4 h-4" />
-                  Create first market
-                </Button>
-              )
-            }
-          />
+          <div className="surface-card">
+            <EmptyState
+              title={search ? 'No markets found' : 'No markets yet'}
+              description="Create a country + operator pair to start adding campaigns"
+              action={
+                canManageMarkets &&
+                !search && (
+                  <Button variant="primary" onClick={() => setShowCreate(true)}>
+                    <Plus className="w-4 h-4" />
+                    Create market
+                  </Button>
+                )
+              }
+            />
+          </div>
         ) : (
-          <div className="space-y-6">
-            {grouped.map((group) => (
-              <div key={group.countryCode} className="space-y-2">
-                <div className="flex items-center gap-2 px-1">
-                  <h2 className="text-xs font-semibold uppercase tracking-wider text-fg-muted">
-                    {group.countryName}
-                  </h2>
-                  <span className="text-[11px] font-mono font-medium text-fg-muted bg-bg-subtle px-1.5 py-0.5 rounded border border-border">
-                    {group.countryCode}
-                  </span>
-                  <span className="text-xs text-fg-muted">
-                    ({group.markets.length} {group.markets.length === 1 ? 'operator' : 'operators'})
-                  </span>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                  {group.markets.map((m) => (
-                    <MarketCard
-                      key={`${m.countryCode}-${m.operatorCode}`}
-                      market={m}
-                      canManageMarkets={canManageMarkets}
-                      onEdit={setEditingMarket}
-                      onNavigate={navigate}
-                    />
-                  ))}
-                </div>
-              </div>
-            ))}
+          <div className="surface-card overflow-hidden">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th className="col-text">Country</th>
+                  <th className="col-text">Operator</th>
+                  <th className="col-text">Codes</th>
+                  <th className="col-num">Campaigns</th>
+                  <th className="col-num w-20" />
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((market) => (
+                  <tr
+                    key={`${market.countryCode}-${market.operatorCode}`}
+                    className="cursor-pointer"
+                    onClick={() =>
+                      navigate(`/markets/${market.countryCode}/${market.operatorCode}`)
+                    }
+                  >
+                    <td className="col-text font-medium">
+                      <span className="inline-flex items-center gap-2">
+                        <Globe className="w-3.5 h-3.5 text-fg-subtle" />
+                        {market.countryName}
+                      </span>
+                    </td>
+                    <td className="col-text">{market.operatorName}</td>
+                    <td className="col-text">
+                      <code className="text-xs font-mono text-fg-muted">
+                        {market.countryCode}-{market.operatorCode}
+                      </code>
+                    </td>
+                    <td className="col-num text-fg-muted">{market.campaignCount}</td>
+                    <td className="col-num">
+                      <div className="inline-flex items-center gap-1">
+                        <button
+                          type="button"
+                          className="p-1.5 text-fg-muted hover:text-accent rounded-md hover:bg-accent-muted transition-colors"
+                          title="Edit market"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            setEditingMarket(market)
+                          }}
+                        >
+                          <Pencil className="w-3.5 h-3.5" />
+                        </button>
+                        <ChevronRight className="w-4 h-4 text-fg-subtle" />
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         )}
       </div>
 
       <CreateMarketModal
-        isOpen={createOpen}
-        onClose={() => setCreateOpen(false)}
-        onCreated={handleCreated}
+        isOpen={showCreate}
+        onClose={() => setShowCreate(false)}
+        onCreated={(market) => {
+          loadMarkets()
+          if (market?.countryCode && market?.operatorCode) {
+            navigate(`/markets/${market.countryCode}/${market.operatorCode}`)
+          }
+        }}
       />
 
       <EditMarketModal
         isOpen={Boolean(editingMarket)}
         market={editingMarket}
         onClose={() => setEditingMarket(null)}
-        onUpdated={handleUpdated}
+        onUpdated={() => loadMarkets()}
       />
     </AppShell>
   )

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { transitionFlow } from '../../services/api/flow'
 import { isDcbFlowContext, setupDcbBindings } from './setupDcbBindings'
 import { setupOtpBindings } from './setupOtpBindings'
 import { attachInputRestrictions } from '../../editor/utils/inputRestrictions'

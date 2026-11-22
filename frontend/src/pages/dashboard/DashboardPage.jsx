@@ -127,7 +127,7 @@ export function DashboardPage() {
         </div>
 
         {/* Markets Overview */}
-        <ActiveMarketsGrid markets={markets} />
+        <ActiveMarketsGrid markets={markets} campaigns={campaigns} />
 
         {/* Top Campaigns & Top Vendors */}
         <TopCampaignsAndVendors
