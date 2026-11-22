@@ -4,380 +4,254 @@ import { Search, Plus, ChevronRight, ArrowLeft, Pencil } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 import AppShell from '../components/ui/AppShell'
 import Button from '../components/ui/Button'
-import Input from '../components/ui/Input'
 import EmptyState from '../components/ui/EmptyState'
-import Modal from '../components/common/Modal'
 import useStore from '../store/useStore'
 import * as marketsApi from '../services/api/markets'
-import * as campaignsApi from '../services/api/campaigns'
 import { campaignDetailPath } from '../utils/routes'
-
-function CreateMarketCampaignModal({
-  isOpen,
-  onClose,
-  countryCode,
-  operatorCode,
-  countryName,
-  operatorName,
-  campaigns = [],
-  onCreated,
-}) {
-  const [name, setName] = useState('')
-  const [copyFromCampaignId, setCopyFromCampaignId] = useState('')
-  const [creating, setCreating] = useState(false)
-  const navigate = useNavigate()
-  const addToast = useStore((s) => s.addToast)
-
-  const handleCreate = async () => {
-    const campaignName = name.trim() || `${countryName} ${operatorName}`
-    setCreating(true)
-    try {
-      const campaign = await marketsApi.createMarketCampaign(countryCode, operatorCode, {
-        name: campaignName,
-        copyFromCampaignId: copyFromCampaignId ? Number(copyFromCampaignId) : undefined,
-      })
-      addToast('Campaign created', 'success')
-      setName('')
-      setCopyFromCampaignId('')
-      onClose()
-      onCreated?.(campaign)
-      navigate(campaignDetailPath(countryCode, operatorCode, campaign.id))
-    } catch (err) {
-      addToast(err.message || 'Failed to create campaign', 'error')
-    } finally {
-      setCreating(false)
-    }
-  }
-
-  return (
-    <Modal isOpen={isOpen} onClose={onClose} title="New campaign" size="md">
-      <div className="space-y-4">
-        <p className="text-sm text-fg-muted">
-          Creating under{' '}
-          <span className="font-medium text-fg">
-            {countryName} / {operatorName}
-          </span>
-        </p>
-        <div>
-          <label className="block text-sm font-medium text-fg mb-1.5">Campaign name</label>
-          <Input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="Wellness WAP"
-            autoFocus
-          />
-        </div>
-        {campaigns.length > 0 && (
-          <div>
-            <label className="block text-sm font-medium text-fg mb-1.5">Copy pages from</label>
-            <select
-              className="w-full rounded-lg border border-border bg-bg-subtle px-3 py-2 text-sm text-fg"
-              value={copyFromCampaignId}
-              onChange={(e) => setCopyFromCampaignId(e.target.value)}
-            >
-              <option value="">Start blank</option>
-              {campaigns.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                  {c.trackingId ? ` (${c.trackingId})` : ''}
-                </option>
-              ))}
-            </select>
-          </div>
-        )}
-        <div className="flex justify-end gap-3 pt-2 border-t border-border">
-          <Button variant="outline" onClick={onClose} disabled={creating}>
-            Cancel
-          </Button>
-          <Button variant="primary" onClick={handleCreate} disabled={creating}>
-            {creating ? 'Creating...' : 'Create campaign'}
-          </Button>
-        </div>
-      </div>
-    </Modal>
-  )
-}
-
-function EditCampaignModal({ isOpen, campaign, onClose, onUpdated }) {
-  const [name, setName] = useState('')
-  const [saving, setSaving] = useState(false)
-  const addToast = useStore((s) => s.addToast)
-
-  useEffect(() => {
-    if (!campaign || !isOpen) return
-    setName(campaign.name || '')
-  }, [campaign, isOpen])
-
-  const handleSave = async () => {
-    if (!campaign || !name.trim()) return
-    setSaving(true)
-    try {
-      const updated = await campaignsApi.updateCampaign(campaign.id, {
-        name: name.trim(),
-      })
-      addToast('Campaign updated', 'success')
-      onClose()
-      onUpdated?.(updated)
-    } catch (err) {
-      addToast(err.message || 'Failed to update campaign', 'error')
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  return (
-    <Modal isOpen={isOpen} onClose={onClose} title="Edit campaign" size="md">
-      <div className="space-y-4">
-        <div>
-          <label className="block text-sm font-medium text-fg mb-1.5">Campaign name</label>
-          <Input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="Wellness WAP"
-            autoFocus
-          />
-        </div>
-        {campaign?.trackingId && (
-          <p className="text-xs text-fg-muted">
-            Tracking ID{' '}
-            <code className="font-mono">{campaign.trackingId}</code> stays the same.
-          </p>
-        )}
-        <div className="flex justify-end gap-3 pt-2 border-t border-border">
-          <Button variant="outline" onClick={onClose} disabled={saving}>
-            Cancel
-          </Button>
-          <Button
-            variant="primary"
-            onClick={handleSave}
-            disabled={saving || !name.trim()}
-          >
-            {saving ? 'Saving...' : 'Save changes'}
-          </Button>
-        </div>
-      </div>
-    </Modal>
-  )
-}
+import { CreateMarketCampaignModal, EditCampaignModal } from './markets/MarketCampaignModals'
 
 function MarketCampaignsPage() {
-  const { countryCode, operatorCode } = useParams()
+  const { countryCode: routeCountry, operatorCode: routeOperator } = useParams()
+  const countryCode = (routeCountry || '').toUpperCase()
+  const operatorCode = (routeOperator || '').toUpperCase()
+
   const navigate = useNavigate()
-  const { isAuthenticated, loading: authLoading } = useAuth()
+  const { user } = useAuth()
+  const canCreate = user?.role === 'SUPERADMIN' || user?.role === 'ADMIN'
+
   const [market, setMarket] = useState(null)
   const [campaigns, setCampaigns] = useState([])
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
   const [search, setSearch] = useState('')
-  const [showCreate, setShowCreate] = useState(false)
+  const [createOpen, setCreateOpen] = useState(false)
   const [editingCampaign, setEditingCampaign] = useState(null)
-  const addToast = useStore((s) => s.addToast)
 
-  const load = useCallback(async () => {
+  const loadData = useCallback(async () => {
     if (!countryCode || !operatorCode) return
     setLoading(true)
+    setError(null)
     try {
-      const [marketData, campaignData] = await Promise.all([
+      const [m, list] = await Promise.all([
         marketsApi.getMarket(countryCode, operatorCode),
         marketsApi.listMarketCampaigns(countryCode, operatorCode),
       ])
-      setMarket(marketData)
-      setCampaigns(campaignData || [])
+      setMarket(m)
+      setCampaigns(list || [])
     } catch (err) {
-      addToast(err.message || 'Failed to load market', 'error')
-      setMarket(null)
-      setCampaigns([])
+      setError(err.message || 'Failed to load market campaigns')
     } finally {
       setLoading(false)
     }
-  }, [countryCode, operatorCode, addToast])
+  }, [countryCode, operatorCode])
 
   useEffect(() => {
-    if (isAuthenticated) load()
-  }, [isAuthenticated, load])
+    loadData()
+  }, [loadData])
 
   const filtered = useMemo(() => {
-    if (!search.trim()) return campaigns
-    const q = search.toLowerCase()
-    return campaigns.filter(
-      (c) =>
-        c.name.toLowerCase().includes(q) ||
-        (c.trackingId || '').toLowerCase().includes(q),
-    )
+    const q = search.trim().toLowerCase()
+    if (!q) return campaigns
+    return campaigns.filter((c) => {
+      return (
+        c.name?.toLowerCase().includes(q) ||
+        c.trackingId?.toLowerCase().includes(q) ||
+        String(c.id).includes(q)
+      )
+    })
   }, [campaigns, search])
 
-  const pageActions = isAuthenticated ? (
-    <Button variant="primary" size="sm" onClick={() => setShowCreate(true)}>
-      <Plus className="w-4 h-4" />
-      New campaign
-    </Button>
-  ) : null
+  const activeCount = useMemo(
+    () => campaigns.filter((c) => c.active).length,
+    [campaigns],
+  )
 
-  if (authLoading || loading) {
-    return (
-      <AppShell>
-        <div className="page-container flex items-center justify-center min-h-[50vh]">
-          <p className="text-fg-muted text-sm">Loading...</p>
-        </div>
-      </AppShell>
+  const handleCreated = (campaign) => {
+    setCampaigns((prev) => [campaign, ...prev])
+  }
+
+  const handleUpdated = (updated) => {
+    setCampaigns((prev) =>
+      prev.map((c) => (c.id === updated.id ? { ...c, ...updated } : c)),
     )
   }
 
-  if (!market) {
-    return (
-      <AppShell>
-        <div className="page-container text-center py-12">
-          <p className="text-fg-muted mb-4">Market not found</p>
-          <Button variant="outline" onClick={() => navigate('/markets')}>
-            Back to markets
-          </Button>
-        </div>
-      </AppShell>
-    )
-  }
+  const countryDisplay = market?.countryName || countryCode
+  const operatorDisplay = market?.operatorName || operatorCode
 
   return (
-    <AppShell actions={pageActions}>
-      <div className="page-container">
-        <button
-          type="button"
-          onClick={() => navigate('/markets')}
-          className="inline-flex items-center gap-1.5 text-sm text-fg-muted hover:text-fg mb-4 transition-colors"
-        >
-          <ArrowLeft className="w-4 h-4" />
-          Back to markets
-        </button>
-
-        <div className="page-header">
-          <p className="text-xs text-fg-subtle mb-1">
-            <Link to="/markets" className="hover:text-fg">
-              Markets
+    <AppShell
+      actions={
+        canCreate && (
+          <Button variant="primary" size="sm" onClick={() => setCreateOpen(true)}>
+            <Plus className="w-4 h-4" />
+            New campaign
+          </Button>
+        )
+      }
+    >
+      <div className="page-container space-y-6">
+        <div>
+          <div className="flex items-center gap-2 mb-2">
+            <Link
+              to="/markets"
+              className="inline-flex items-center gap-1 text-xs text-fg-muted hover:text-fg font-medium transition-colors"
+            >
+              <ArrowLeft className="w-3.5 h-3.5" />
+              All markets
             </Link>
-            {' / '}
-            {market.countryCode} / {market.operatorCode}
-          </p>
-          <h1 className="page-header-title">
-            {market.countryName} / {market.operatorName}
-          </h1>
-          <p className="page-header-description">
-            Campaigns for this country and operator
-          </p>
+            <span className="text-border-strong text-xs">/</span>
+            <span className="text-xs font-mono text-fg-muted bg-bg-subtle px-1.5 py-0.5 rounded border border-border">
+              {countryCode}
+            </span>
+            <span className="text-xs font-mono text-fg-muted bg-bg-subtle px-1.5 py-0.5 rounded border border-border">
+              {operatorCode}
+            </span>
+          </div>
+
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+            <div>
+              <h1 className="page-title">
+                {countryDisplay} — {operatorDisplay}
+              </h1>
+              <p className="page-subtitle">
+                Campaigns running on {operatorDisplay} ({countryDisplay}).
+              </p>
+            </div>
+            <div className="flex items-center gap-3 text-xs text-fg-muted font-medium bg-bg-surface border border-border rounded-lg px-3 py-2 self-start sm:self-auto">
+              <span>
+                <strong className="text-fg tabular-nums">{campaigns.length}</strong>{' '}
+                {campaigns.length === 1 ? 'campaign' : 'campaigns'}
+              </span>
+              <span className="text-border-strong">•</span>
+              <span className="text-emerald-600 font-semibold">
+                <strong className="tabular-nums">{activeCount}</strong> active
+              </span>
+            </div>
+          </div>
         </div>
 
-        <div className="mb-4">
-          <div className="relative max-w-sm">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-fg-subtle" />
-            <Input
+        <div className="flex items-center gap-3">
+          <div className="relative flex-1 max-w-md">
+            <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-fg-muted pointer-events-none" />
+            <input
               type="text"
-              placeholder="Search campaigns..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="pl-9"
+              placeholder="Search campaigns by name or tracking ID..."
+              className="w-full pl-9 pr-3 py-2 text-sm rounded-lg border border-border bg-bg-surface text-fg placeholder:text-fg-muted focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-colors"
             />
           </div>
+          {search && (
+            <button
+              onClick={() => setSearch('')}
+              className="text-xs text-fg-muted hover:text-fg font-medium"
+            >
+              Clear
+            </button>
+          )}
         </div>
 
-        {filtered.length === 0 ? (
-          <div className="surface-card">
-            <EmptyState
-              title={search ? 'No campaigns found' : 'No campaigns yet'}
-              description="Create a campaign under this market to configure pages and subscription flow"
-              action={
-                !search && (
-                  <Button variant="primary" onClick={() => setShowCreate(true)}>
-                    <Plus className="w-4 h-4" />
-                    Create campaign
-                  </Button>
-                )
-              }
-            />
+        {loading ? (
+          <div className="py-16 text-center text-sm text-fg-muted">Loading campaigns...</div>
+        ) : error ? (
+          <div className="p-4 rounded-lg bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900 text-sm text-red-700 dark:text-red-300">
+            {error}
           </div>
+        ) : filtered.length === 0 ? (
+          <EmptyState
+            title={search ? 'No matching campaigns' : 'No campaigns in this market'}
+            description={
+              search
+                ? `No campaigns match "${search}". Try another filter.`
+                : `Create a campaign to start receiving traffic for ${operatorDisplay} (${countryDisplay}).`
+            }
+            action={
+              canCreate &&
+              !search && (
+                <Button variant="primary" size="sm" onClick={() => setCreateOpen(true)}>
+                  <Plus className="w-4 h-4" />
+                  Create campaign
+                </Button>
+              )
+            }
+          />
         ) : (
-          <div className="surface-card overflow-hidden">
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th className="col-text">Campaign</th>
-                  <th className="col-text">Tracking ID</th>
-                  <th className="col-text">Status</th>
-                  <th className="col-text">Pages</th>
-                  <th className="col-num w-20" />
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.map((campaign) => (
-                  <tr
-                    key={campaign.id}
-                    className="cursor-pointer"
-                    onClick={() =>
-                      navigate(campaignDetailPath(countryCode, operatorCode, campaign.id))
-                    }
-                  >
-                    <td className="col-text font-medium">{campaign.name}</td>
-                    <td className="col-text">
-                      <code className="text-xs font-mono text-fg-muted">
-                        {campaign.trackingId || '—'}
-                      </code>
-                    </td>
-                    <td className="col-text">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+            {filtered.map((c) => {
+              const detailUrl = campaignDetailPath(countryCode, operatorCode, c.id)
+              return (
+                <div
+                  key={c.id}
+                  className="group relative bg-bg-surface border border-border hover:border-primary/50 rounded-xl p-4 transition-all hover:shadow-xs flex items-center justify-between gap-3 cursor-pointer"
+                  onClick={() => navigate(detailUrl)}
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="font-semibold text-fg text-sm truncate">{c.name}</span>
                       <span
-                        className={`badge ${campaign.active ? 'badge-success' : 'badge-muted'}`}
-                      >
-                        {campaign.active ? 'Active' : 'Draft'}
-                      </span>
-                    </td>
-                    <td className="col-text">
-                      <span
-                        className={`badge ${
-                          campaign.requiredComplete ? 'badge-success' : 'badge-warning'
+                        className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider ${
+                          c.active
+                            ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300'
+                            : 'bg-bg-subtle text-fg-muted'
                         }`}
                       >
-                        {campaign.requiredComplete ? 'Complete' : 'Incomplete'}
+                        {c.active ? 'Active' : 'Paused'}
                       </span>
-                    </td>
-                    <td className="col-num">
-                      <div className="inline-flex items-center gap-1">
-                        <button
-                          type="button"
-                          className="p-1.5 text-fg-muted hover:text-accent rounded-md hover:bg-accent-muted transition-colors"
-                          title="Edit campaign"
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            setEditingCampaign(campaign)
-                          }}
-                        >
-                          <Pencil className="w-3.5 h-3.5" />
-                        </button>
-                        <ChevronRight className="w-4 h-4 text-fg-subtle" />
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+                    </div>
+
+                    <div className="flex items-center gap-2 text-xs text-fg-muted font-mono">
+                      <span>{c.trackingId || `#${c.id}`}</span>
+                      {c.verificationMode && (
+                        <>
+                          <span className="text-border-strong font-sans">•</span>
+                          <span className="font-sans text-[11px] uppercase">
+                            {c.verificationMode.replace(/_/g, ' ')}
+                          </span>
+                        </>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-1">
+                    {canCreate && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          setEditingCampaign(c)
+                        }}
+                        className="p-1.5 rounded-lg text-fg-muted hover:text-fg hover:bg-bg-subtle transition-colors"
+                        title="Edit campaign name"
+                      >
+                        <Pencil className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                    <ChevronRight className="w-4 h-4 text-fg-muted group-hover:text-primary group-hover:translate-x-0.5 transition-all" />
+                  </div>
+                </div>
+              )
+            })}
           </div>
         )}
       </div>
 
       <CreateMarketCampaignModal
-        isOpen={showCreate}
-        onClose={() => setShowCreate(false)}
-        countryCode={market.countryCode}
-        operatorCode={market.operatorCode}
-        countryName={market.countryName}
-        operatorName={market.operatorName}
+        isOpen={createOpen}
+        onClose={() => setCreateOpen(false)}
+        countryCode={countryCode}
+        operatorCode={operatorCode}
+        countryName={countryDisplay}
+        operatorName={operatorDisplay}
         campaigns={campaigns}
-        onCreated={() => load()}
+        onCreated={handleCreated}
       />
 
       <EditCampaignModal
-        isOpen={!!editingCampaign}
+        isOpen={Boolean(editingCampaign)}
         campaign={editingCampaign}
         onClose={() => setEditingCampaign(null)}
-        onUpdated={(updated) => {
-          setCampaigns((prev) =>
-            prev.map((c) => (c.id === updated.id ? { ...c, ...updated } : c)),
-          )
-        }}
+        onUpdated={handleUpdated}
       />
     </AppShell>
   )

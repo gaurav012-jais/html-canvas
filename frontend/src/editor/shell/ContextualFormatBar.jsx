@@ -76,9 +76,12 @@ export function ContextualFormatBar() {
 
     // Initial check
     const current = editor.getSelected();
-    if (current) updateStateFromComponent(current);
+    const timer = setTimeout(() => {
+      if (current) updateStateFromComponent(current);
+    }, 0);
 
     return () => {
+      clearTimeout(timer);
       editor.off('component:selected', onSelect);
       editor.off('component:deselected', onDeselect);
       editor.off('component:update', onUpdate);

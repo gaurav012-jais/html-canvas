@@ -1,226 +1,26 @@
 import { createZipBlob } from '../../utils/zip'
-import { getActiveStylesheetsContent, transformReactComponentsInHtml } from '../utils/styleUtils'
-import {
-  FLOW_RUNTIME_CSS,
-  FLOW_RUNTIME_STYLESHEET_HREFS,
-  RESPONSIVE_STYLE_RULES,
-} from './flowRuntimeCss'
 import { sanitizeSavedPageHtml } from './wysiwygContract'
+import {
+  slugifyFilename,
+  escapeHtml,
+  minifyCss,
+  optimizePageContent,
+  renderPageDocument,
+  buildHtmlDocument,
+  buildPreviewDocument,
+  RESPONSIVE_STYLE_RULES,
+} from './exportDocument'
 
 // Re-export so existing imports (`from './exportSite'`) keep working.
-export { RESPONSIVE_STYLE_RULES }
-
-export function slugifyFilename(value) {
-  return value.replace(/[^a-z0-9]/gi, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').toLowerCase() || 'page'
-}
-
-export function escapeHtml(text) {
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-}
-
-export function minifyCss(css) {
-  if (!css) return ''
-  return css
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .replace(/\s+/g, ' ')
-    .replace(/\s*([{\}:;])\s*/g, '$1')
-    .trim()
-}
-
-export function optimizePageContent(
-  html,
-  css,
-  pages,
-  activePageFilename,
-  isPreview = false
-) {
-  if (!html?.trim()) {
-    return { optimizedHtml: '', optimizedCss: '' }
-  }
-
-  const parser = new DOMParser()
-  const doc = parser.parseFromString(html, 'text/html')
-
-  const refMap = new Map()
-  pages.forEach((p) => {
-    const pageId = String(p.id).toLowerCase()
-    refMap.set(pageId, p.filename)
-    refMap.set(`#${pageId}`, p.filename)
-    refMap.set(`#page-${pageId}`, p.filename)
-
-    const nameSlug = p.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
-    refMap.set(nameSlug, p.filename)
-    refMap.set(`#${nameSlug}`, p.filename)
-    refMap.set(p.name.toLowerCase(), p.filename)
-  })
-
-  // Rewrite links
-  const links = doc.querySelectorAll('a')
-  links.forEach((link) => {
-    const href = link.getAttribute('href')
-    if (!href) return
-
-    const cleanHref = href.trim()
-    let pagePart = cleanHref
-    let sectionPart = ''
-    const hashIndex = cleanHref.indexOf('#')
-
-    if (hashIndex > -1) {
-      pagePart = cleanHref.substring(0, hashIndex)
-      sectionPart = cleanHref.substring(hashIndex + 1)
-    }
-
-    const pagePartNoSlash = pagePart.replace(/^\/|\/$/g, '')
-    const lowerPagePart = pagePartNoSlash.toLowerCase()
-    const lowerSectionPart = sectionPart.toLowerCase()
-
-    if (pagePartNoSlash && !sectionPart) {
-      if (doc.getElementById(pagePartNoSlash) || doc.querySelector(`[id="${pagePartNoSlash}" i]`)) {
-        const foundEl = doc.getElementById(pagePartNoSlash) || doc.querySelector(`[id="${pagePartNoSlash}" i]`)
-        const actualId = foundEl ? foundEl.getAttribute('id') || pagePartNoSlash : pagePartNoSlash
-        link.setAttribute('href', `#${actualId}`)
-      } else if (refMap.has(lowerPagePart)) {
-        const targetFilename = refMap.get(lowerPagePart)
-        link.setAttribute('href', targetFilename)
-      }
-    } else if (pagePartNoSlash && sectionPart) {
-      if (refMap.has(lowerPagePart)) {
-        const targetFilename = refMap.get(lowerPagePart)
-        link.setAttribute('href', `${targetFilename}#${sectionPart}`)
-      }
-    } else if (!pagePartNoSlash && sectionPart) {
-      if (doc.getElementById(sectionPart) || doc.querySelector(`[id="${sectionPart}" i]`)) {
-        const foundEl = doc.getElementById(sectionPart) || doc.querySelector(`[id="${sectionPart}" i]`)
-        const actualId = foundEl ? foundEl.getAttribute('id') || sectionPart : sectionPart
-        link.setAttribute('href', `#${actualId}`)
-      } else if (refMap.has(lowerSectionPart)) {
-        const targetFilename = refMap.get(lowerSectionPart)
-        link.setAttribute('href', targetFilename)
-      }
-    }
-  })
-
-  // Validate images and lazy load
-  const images = doc.querySelectorAll('img')
-  images.forEach((img) => {
-    img.setAttribute('loading', 'lazy')
-    const src = img.getAttribute('src')
-    if (!src || src.trim() === '' || src === '#') {
-      img.setAttribute('src', 'https://images.unsplash.com/photo-1555066931-4365d14bab8c?w=800')
-    }
-  })
-
-  const optimizedCss = minifyCss(css)
-
-  return {
-    optimizedHtml: doc.body.innerHTML,
-    optimizedCss,
-  }
-}
-
-const ANCHOR_SCROLL_SCRIPT = `(function(){
-  function scrollToHash(hash){
-    if(!hash||hash==='#')return;
-    var id=decodeURIComponent(hash.replace(/^#/,''));
-    var el=document.getElementById(id);
-    if(el)el.scrollIntoView({behavior:'smooth',block:'start'});
-  }
-  document.documentElement.style.scrollBehavior='smooth';
-  document.addEventListener('click',function(e){
-    var a=e.target.closest('a');
-    if(!a)return;
-    var href=a.getAttribute('href');
-    if(!href)return;
-    if(href.endsWith('.html')){
-      if(window.self !== window.top){
-        e.preventDefault();
-        window.parent.postMessage({ type: 'NAVIGATE_TO_PAGE', filename: href }, '*');
-        return;
-      }
-    }
-    if(href.startsWith('#') && href !== '#'){
-      if(document.getElementById(decodeURIComponent(href.slice(1)))){
-        e.preventDefault();
-        scrollToHash(href);
-      }
-    }
-  });
-  if(location.hash)scrollToHash(location.hash);
-})();`
-
-export function renderPageDocument(
-  title,
-  html,
-  css,
-  pages,
-  activePageFilename,
-  isPreview = false
-) {
-  const compiledHtml = transformReactComponentsInHtml(html)
-  const { optimizedHtml, optimizedCss } = optimizePageContent(compiledHtml, css, pages, activePageFilename, isPreview)
-  const scrollBehavior = `html { scroll-behavior: smooth; }`
-  // Prefer shared runtime CSS (same as live shadow) over dumping the whole admin app stylesheet.
-  const hostCss = getActiveStylesheetsContent()
-  const runtimeLinks = FLOW_RUNTIME_STYLESHEET_HREFS.map(
-    (href) => `<link rel="stylesheet" href="${href}" crossorigin="anonymous">`,
-  ).join('\n  ')
-
-  return `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>${escapeHtml(title)}</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  ${runtimeLinks}
-  <script>
-    tailwind = {
-      config: {
-        corePlugins: {
-          preflight: false,
-        }
-      }
-    };
-  </script>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <style>${FLOW_RUNTIME_CSS}
-${optimizedCss}
-${scrollBehavior}
-/* Optional host leftovers (admin theme) — runtime CSS above is the WYSIWYG contract */
-${hostCss}</style>
-</head>
-<body id="wrapper">${optimizedHtml}
-<script>${ANCHOR_SCROLL_SCRIPT}</script>
-</body>
-</html>`
-}
-
-export function buildHtmlDocument(
-  title,
-  bodyHtml,
-  css,
-  pages = [],
-  filename = 'index.html'
-) {
-  return renderPageDocument(title, bodyHtml, css, pages, filename, false)
-}
-
-/** Preview iframe document — same HTML/CSS as export plus in-page #anchor scrolling. */
-export function buildPreviewDocument(
-  title,
-  bodyHtml,
-  css,
-  pages = []
-) {
-  if (!bodyHtml?.trim()) {
-    return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escapeHtml(title)}</title></head><body style="font-family:Inter,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;color:#64748b;"><p>No content yet. Add blocks in the editor.</p></body></html>`
-  }
-  return renderPageDocument(title, bodyHtml, css, pages, 'index.html', true)
+export {
+  slugifyFilename,
+  escapeHtml,
+  minifyCss,
+  optimizePageContent,
+  renderPageDocument,
+  buildHtmlDocument,
+  buildPreviewDocument,
+  RESPONSIVE_STYLE_RULES,
 }
 
 export function cleanLocalhostUrls(text) {
@@ -240,7 +40,7 @@ export function inlineCssInHtml(html, css, wrapperStyle = '') {
   const doc = parser.parseFromString(html, 'text/html')
 
   const stylesMap = new Map()
-  
+
   if (css) {
     const cleanCss = css.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\s+/g, ' ')
     const rules = cleanCss.split('}')
@@ -249,7 +49,7 @@ export function inlineCssInHtml(html, css, wrapperStyle = '') {
       if (parts.length === 2) {
         const selector = parts[0].trim()
         const declarations = parts[1].trim()
-        
+
         const classRegex = /\.([a-zA-Z0-9_-]+)/g
         let classMatch
         while ((classMatch = classRegex.exec(selector)) !== null) {
@@ -264,7 +64,7 @@ export function inlineCssInHtml(html, css, wrapperStyle = '') {
   const allElements = doc.body.querySelectorAll('*')
   allElements.forEach((el) => {
     let combinedStyles = el.getAttribute('style') || ''
-    
+
     const classes = Array.from(el.classList)
     classes.forEach((cls) => {
       const ruleStyles = stylesMap.get(cls)
@@ -294,12 +94,16 @@ export function getActivePageSnapshot(editor) {
       if (editor.Commands?.isActive?.('core:rte')) {
         editor.Commands.stop('core:rte')
       }
-    } catch (_) {}
+    } catch (_) {
+      // ignore rte stop
+    }
     try {
       if (editor.rte?.end) {
         editor.rte.end()
       }
-    } catch (_) {}
+    } catch (_) {
+      // ignore rte end
+    }
   }
   const selected = editor.Pages.getSelected()
   const main = selected?.getMainComponent() || editor.getWrapper()

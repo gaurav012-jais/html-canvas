@@ -31,7 +31,9 @@ function healAllHotspots(editor) {
         if (customPlaced.length > 0) {
           hotspots.forEach((h) => {
             if (!customPlaced.includes(h)) {
-              try { children.remove(h) } catch (_) {}
+              try { children.remove(h) } catch (_) {
+                // ignore hotspot removal error
+              }
             }
           })
         }

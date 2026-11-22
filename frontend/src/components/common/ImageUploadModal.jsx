@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import axios from 'axios';
-import { X, Upload, Image, Layout, AlertCircle, Loader2 } from 'lucide-react';
+import { X, Upload, AlertCircle, Loader2 } from 'lucide-react';
 
 /**
  * ImageUploadModal
@@ -47,10 +47,13 @@ export default function ImageUploadModal({
   // Reset modal state when closed
   useEffect(() => {
     if (!isOpen) {
-      setSelectedFile(null);
-      revokePreview();
-      setError(null);
-      setIsUploading(false);
+      const timer = setTimeout(() => {
+        setSelectedFile(null);
+        revokePreview();
+        setError(null);
+        setIsUploading(false);
+      }, 0);
+      return () => clearTimeout(timer);
     }
   }, [isOpen, revokePreview]);
 

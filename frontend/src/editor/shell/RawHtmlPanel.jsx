@@ -31,7 +31,8 @@ export function RawHtmlPanel({ editor, active }) {
 
   useEffect(() => {
     if (!editor || !active) return
-    syncFromEditor()
+    const timer = setTimeout(syncFromEditor, 0)
+    return () => clearTimeout(timer)
   }, [editor, active, syncFromEditor])
 
   useEffect(() => {

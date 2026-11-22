@@ -43,12 +43,15 @@ export default function CampaignBuilder() {
     if (!id || !pageType) return undefined
     const key = `${id}|${String(pageType).toUpperCase()}`
     let cancelled = false
-    setLoadedPageKey(null)
-    loadCampaignPage(id, pageType, true).finally(() => {
-      if (!cancelled) setLoadedPageKey(key)
-    })
+    const timer = setTimeout(() => {
+      setLoadedPageKey(null)
+      loadCampaignPage(id, pageType, true).finally(() => {
+        if (!cancelled) setLoadedPageKey(key)
+      })
+    }, 0)
     return () => {
       cancelled = true
+      clearTimeout(timer)
     }
   }, [id, pageType, loadCampaignPage])
 

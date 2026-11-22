@@ -136,7 +136,9 @@ export function setupEditorLoadHandler(ed, { funnelPageType, step, getIsMounted 
       filterBlockElements(ed, 'sections', '')
       try {
         ed.setDevice('Mobile')
-      } catch (_) {}
+      } catch (_) {
+        // Device switch fallback
+      }
       const selectedDev = ed.Devices.getSelected()
       if (selectedDev) {
         applyDeviceViewport(ed, String(selectedDev.get('name')))

@@ -181,7 +181,7 @@ export async function exportPostbackDayReport(opts = {}) {
     return { filename }
   } catch (err) {
     if (err?.name === 'AbortError') {
-      throw new Error('Export timed out. Try a shorter date range.')
+      throw new Error('Export timed out. Try a shorter date range.', { cause: err })
     }
     throw err
   } finally {

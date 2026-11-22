@@ -1,5 +1,5 @@
 export function copyWithExecCommand(text) {
-  let success = false;
+  let success;
   try {
     const el = document.createElement('textarea');
     el.value = text;
@@ -14,14 +14,15 @@ export function copyWithExecCommand(text) {
     el.select();
     el.setSelectionRange(0, 999999); // For mobile devices
     
-    success = document.execCommand('copy');
+    const result = document.execCommand('copy');
+    success = Boolean(result);
     document.body.removeChild(el);
 
     if (selected) {
       document.getSelection().removeAllRanges();
       document.getSelection().addRange(selected);
     }
-  } catch (err) {
+  } catch (_err) {
     success = false;
   }
   return success;

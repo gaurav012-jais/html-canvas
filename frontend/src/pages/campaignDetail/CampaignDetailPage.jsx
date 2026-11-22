@@ -1,4 +1,4 @@
-import { memo, useEffect, useState, useMemo, useCallback } from 'react'
+import { memo, useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import {
   ExternalLink,
@@ -11,16 +11,16 @@ import AppShell from '../../components/ui/AppShell'
 import Button from '../../components/ui/Button'
 import { copyToClipboard } from '../../utils/clipboard'
 import { marketPath, resolveMarketCodes } from '../../utils/routes'
-import { getCampaignPreviewUrl, getCampaignVendorStats } from '../../services/api/campaigns'
-import { clampPayoutPercent } from '../../services/api/otp'
+import { getCampaignPreviewUrl } from '../../services/api/campaigns'
 import CampaignApiConfigModal from '../../components/dashboard/CampaignApiConfigModal'
-import { getDateRangeForPreset, DEFAULT_TIMEZONE, shiftDateString } from '../../utils/date'
+import { DEFAULT_TIMEZONE } from '../../utils/date'
 import CampaignFlowBuilder from '../../components/flow/CampaignFlowBuilder'
-import { effectiveCallbackStatuses } from '../../components/partners/AllowedCallbackStatusesField'
 import { resolveCampaignDetailFlow } from './flows'
 import VendorStatsSection from './VendorStatsSection'
 import VendorAssignModal from './VendorAssignModal'
 import CampaignHeader from './CampaignHeader'
+import { useCampaignTracking } from './hooks/useCampaignTracking'
+import { useCampaignVendorRows } from './hooks/useCampaignVendorRows'
 
 function CampaignDetailPage() {
   const { id, countryCode: routeCountry, operatorCode: routeOperator } = useParams()
@@ -35,97 +35,52 @@ function CampaignDetailPage() {
   const [showApiConfig, setShowApiConfig] = useState(false)
   const [showVendorModal, setShowVendorModal] = useState(false)
   const [activating, setActivating] = useState(false)
-  const [assigningVendor, setAssigningVendor] = useState(false)
   const [copiedId, setCopiedId] = useState(null)
-  const [selectedVendorForAdd, setSelectedVendorForAdd] = useState('')
-  const [addPayoutPercent, setAddPayoutPercent] = useState(100)
-  const [addAllowedStatuses, setAddAllowedStatuses] = useState('')
   const [editingName, setEditingName] = useState(false)
   const [nameDraft, setNameDraft] = useState('')
   const [savingName, setSavingName] = useState(false)
   const timezone = useStore((s) => s.timezone) || DEFAULT_TIMEZONE
   const addToast = useStore((s) => s.addToast)
 
-  const [vendorPreset, setVendorPreset] = useState('today')
-  const [vendorCustomRange, setVendorCustomRange] = useState({ from: '', to: '' })
-  const [vendorDateRange, setVendorDateRange] = useState(() => getDateRangeForPreset('today', timezone))
-  const [vendorStats, setVendorStats] = useState({ apiExpose: false, vendors: [] })
-  const [vendorStatsLoading, setVendorStatsLoading] = useState(false)
+  const {
+    assigningVendor,
+    selectedVendorForAdd,
+    setSelectedVendorForAdd,
+    addPayoutPercent,
+    setAddPayoutPercent,
+    addAllowedStatuses,
+    setAddAllowedStatuses,
+    handleSubmitTracking,
+    handleRemoveTracking,
+    handleToggleTrackingActive,
+    handleSavePayoutPercent,
+    handleSaveTrackingStatuses,
+    handleSaveVendorCapping,
+  } = useCampaignTracking({ campaign, vendors, updateCampaign })
 
-  const handleVendorPresetChange = (newPreset) => {
-    setVendorPreset(newPreset)
-    if (newPreset === 'all') {
-      setVendorDateRange({ from: '', to: '' })
-    } else if (newPreset === 'yesterday') {
-      const todayStr = getDateRangeForPreset('today', timezone).from
-      const yestStr = shiftDateString(todayStr, -1)
-      setVendorDateRange({ from: yestStr, to: yestStr })
-    } else if (newPreset !== 'custom') {
-      const range = getDateRangeForPreset(newPreset, timezone)
-      setVendorDateRange(range)
-    }
-  }
-
-  const handleVendorCustomDateApply = () => {
-    if (!vendorCustomRange.from || !vendorCustomRange.to) {
-      if (addToast) addToast('Please select both From and To dates', 'warning')
-      return
-    }
-    setVendorDateRange({ from: vendorCustomRange.from, to: vendorCustomRange.to })
-  }
+  const {
+    vendorPreset,
+    vendorCustomRange,
+    setVendorCustomRange,
+    vendorStatsLoading,
+    vendorRows,
+    vendorTrackings,
+    activeVendors,
+    handleVendorPresetChange,
+    handleVendorCustomDateApply,
+    loadVendorStats,
+  } = useCampaignVendorRows({ id, campaign, vendors, timezone, addToast })
 
   useEffect(() => {
     fetchVendors().catch(() => {})
   }, [fetchVendors])
 
-  const loadVendorStats = useCallback(() => {
-    if (!id) return
-    setVendorStatsLoading(true)
-    getCampaignVendorStats(id, {
-      from: vendorDateRange.from,
-      to: vendorDateRange.to,
-      timezone,
-    })
-      .then((data) => {
-        setVendorStats(data || { apiExpose: false, vendors: [] })
-      })
-      .catch((err) => {
-        console.error('Failed to load vendor stats:', err)
-        setVendorStats({ apiExpose: false, vendors: [] })
-      })
-      .finally(() => {
-        setVendorStatsLoading(false)
-      })
-  }, [id, vendorDateRange, timezone])
-
   useEffect(() => {
-    let cancelled = false
-    if (!id) return
-    setVendorStatsLoading(true)
-    getCampaignVendorStats(id, {
-      from: vendorDateRange.from,
-      to: vendorDateRange.to,
-      timezone,
-    })
-      .then((data) => {
-        if (!cancelled) setVendorStats(data || { apiExpose: false, vendors: [] })
-      })
-      .catch((err) => {
-        console.error('Failed to fetch vendor stats:', err)
-        if (!cancelled) setVendorStats({ apiExpose: false, vendors: [] })
-      })
-      .finally(() => {
-        if (!cancelled) setVendorStatsLoading(false)
-      })
-
-    return () => {
-      cancelled = true
-    }
-  }, [id, vendorDateRange.from, vendorDateRange.to, timezone, campaign?.trackings])
-
-  useEffect(() => {
-    setNameDraft(campaign?.name || '')
-    setEditingName(false)
+    const timer = setTimeout(() => {
+      setNameDraft(campaign?.name || '')
+      setEditingName(false)
+    }, 0)
+    return () => clearTimeout(timer)
   }, [campaign?.id, campaign?.name])
 
   useEffect(() => {
@@ -153,182 +108,6 @@ function CampaignDetailPage() {
     }
   }
 
-  const serializeTrackings = (list) =>
-    (list || [])
-      .map((t) => ({
-        vendorId: Number(t.vendorId ?? t.vendor?.id),
-        affiliateId: null,
-        active: t.active !== false,
-        payoutPercent: clampPayoutPercent(t.payoutPercent ?? 100),
-        allowedCallbackStatuses:
-          typeof t.allowedCallbackStatuses === 'string'
-            ? t.allowedCallbackStatuses.trim() || null
-            : t.allowedCallbackStatuses || null,
-        cappingEnabled: Boolean(t.cappingEnabled),
-        cappingMetric:
-          String(t.cappingMetric || '').toLowerCase() === 'clicks'
-            ? 'clicks'
-            : 'conversions',
-        cappingLimit:
-          t.cappingLimit != null && t.cappingLimit !== ''
-            ? parseInt(t.cappingLimit, 10)
-            : null,
-        cappingAction:
-          String(t.cappingAction || '').toLowerCase() === 'fallback'
-            ? 'fallback'
-            : 'stop',
-        cappingInterval: ['daily', 'weekly', 'monthly', 'total'].includes(
-          String(t.cappingInterval || '').toLowerCase(),
-        )
-          ? String(t.cappingInterval).toLowerCase()
-          : 'daily',
-        fallbackCampaignId:
-          t.fallbackCampaignId != null && t.fallbackCampaignId !== ''
-            ? parseInt(t.fallbackCampaignId, 10)
-            : null,
-      }))
-      .filter((t) => t.vendorId)
-
-  const handleSubmitTracking = async () => {
-    if (!campaign || !selectedVendorForAdd) return
-    setAssigningVendor(true)
-    try {
-      const vendorId = Number(selectedVendorForAdd)
-      const currentTrackings = serializeTrackings(campaign.trackings).filter(
-        (t) => t.vendorId !== vendorId,
-      )
-
-      if (!currentTrackings.find((t) => t.vendorId === vendorId)) {
-        const vendor = vendors.find((v) => Number(v.id) === vendorId)
-        currentTrackings.push({
-          vendorId,
-          affiliateId: null,
-          active: true,
-          payoutPercent: clampPayoutPercent(addPayoutPercent),
-          allowedCallbackStatuses:
-            addAllowedStatuses.trim() ||
-            vendor?.allowedCallbackStatuses?.trim() ||
-            null,
-        })
-        await updateCampaign(campaign.id, { trackings: currentTrackings })
-        useStore.getState().addToast('Vendor assigned', 'success')
-      }
-      setSelectedVendorForAdd('')
-      setAddPayoutPercent(100)
-      setAddAllowedStatuses('')
-    } finally {
-      setAssigningVendor(false)
-    }
-  }
-
-  const handleRemoveTracking = async (vendorId) => {
-    if (!campaign) return
-    const ok = window.confirm(
-      'Remove this tracking assignment? The shareable link will stop working for this vendor.',
-    )
-    if (!ok) return
-    setAssigningVendor(true)
-    try {
-      const newTrackings = serializeTrackings(campaign.trackings).filter(
-        (t) => t.vendorId !== Number(vendorId),
-      )
-      await updateCampaign(campaign.id, { trackings: newTrackings })
-      useStore.getState().addToast('Tracking removed', 'success')
-    } finally {
-      setAssigningVendor(false)
-    }
-  }
-
-  const handleToggleTrackingActive = async (vendorId) => {
-    if (!campaign) return
-    setAssigningVendor(true)
-    try {
-      const targetVendorId = Number(vendorId)
-      const currentTrackings = serializeTrackings(campaign.trackings).map((t) => ({
-        ...t,
-        active: t.vendorId === targetVendorId ? !t.active : t.active,
-      }))
-      await updateCampaign(campaign.id, { trackings: currentTrackings })
-      const nowActive = currentTrackings.find(
-        (t) => t.vendorId === targetVendorId,
-      )?.active
-      useStore.getState().addToast(
-        nowActive
-          ? 'Assignment activated'
-          : 'Assignment deactivated — link will show not available',
-        'success',
-      )
-    } finally {
-      setAssigningVendor(false)
-    }
-  }
-
-  const handleSavePayoutPercent = async (vendorId, nextPercent) => {
-    if (!campaign) return
-    const payoutPercent = clampPayoutPercent(nextPercent)
-    const current = serializeTrackings(campaign.trackings)
-    const existing = current.find((t) => t.vendorId === Number(vendorId))
-    if (!existing || existing.payoutPercent === payoutPercent) return
-    setAssigningVendor(true)
-    try {
-      await updateCampaign(campaign.id, {
-        trackings: current.map((t) =>
-          t.vendorId === Number(vendorId) ? { ...t, payoutPercent } : t,
-        ),
-      })
-      useStore.getState().addToast(`Payout set to ${payoutPercent}%`, 'success')
-    } finally {
-      setAssigningVendor(false)
-    }
-  }
-
-  const handleSaveTrackingStatuses = async (vendorId, nextStatuses) => {
-    if (!campaign) return
-    const allowedCallbackStatuses = String(nextStatuses || '').trim() || null
-    const current = serializeTrackings(campaign.trackings)
-    const existing = current.find((t) => t.vendorId === Number(vendorId))
-    if (
-      !existing ||
-      (existing.allowedCallbackStatuses || null) === allowedCallbackStatuses
-    ) {
-      return
-    }
-    setAssigningVendor(true)
-    try {
-      await updateCampaign(campaign.id, {
-        trackings: current.map((t) =>
-          t.vendorId === Number(vendorId) ? { ...t, allowedCallbackStatuses } : t,
-        ),
-      })
-      useStore.getState().addToast(
-        allowedCallbackStatuses
-          ? `This assignment fires on: ${allowedCallbackStatuses}`
-          : 'Cleared — this assignment uses the vendor default',
-        'success',
-      )
-    } finally {
-      setAssigningVendor(false)
-    }
-  }
-
-  const handleSaveVendorCapping = async (vendorId, cappingData) => {
-    if (!campaign) return
-    const current = serializeTrackings(campaign.trackings)
-    setAssigningVendor(true)
-    try {
-      await updateCampaign(campaign.id, {
-        trackings: current.map((t) =>
-          t.vendorId === Number(vendorId) ? { ...t, ...cappingData } : t,
-        ),
-      })
-      useStore
-        .getState()
-        .addToast('Vendor capping saved successfully', 'success')
-    } finally {
-      setAssigningVendor(false)
-    }
-  }
-
   const copyTracking = (url, copyKey) => {
     copyToClipboard(url).then((success) => {
       if (success) {
@@ -336,94 +115,22 @@ function CampaignDetailPage() {
         setTimeout(() => setCopiedId(null), 2000)
         useStore.getState().addToast('Copied', 'success')
       } else {
-        useStore.getState().addToast('Copy failed', 'error')
+        useStore.getState().addToast('Failed to copy', 'error')
       }
     })
   }
 
   const handleToggleActive = async () => {
     if (!campaign) return
+    const next = !campaign.active
     setActivating(true)
     try {
-      await updateCampaign(campaign.id, { active: !campaign.active })
-      useStore.getState().addToast(
-        campaign.active ? 'Campaign deactivated' : 'Campaign activated',
-        'success',
-      )
+      await updateCampaign(campaign.id, { active: next })
+      useStore.getState().addToast(`Campaign ${next ? 'activated' : 'paused'}`, 'success')
     } finally {
       setActivating(false)
     }
   }
-
-  const activeVendors = useMemo(
-    () => vendors.filter((v) => v.active !== false),
-    [vendors],
-  )
-
-  const vendorTrackings = useMemo(() => {
-    const seen = new Set()
-    const list = []
-    for (const t of campaign?.trackings || []) {
-      const tid = Number(t.vendor?.id ?? t.vendorId)
-      if (!tid || seen.has(tid)) continue
-      seen.add(tid)
-      list.push({
-        ...t,
-        vendor: t.vendor || vendors.find((v) => Number(v.id) === tid) || { id: tid },
-      })
-    }
-    return list
-  }, [campaign?.trackings, vendors])
-
-  const vendorRows = useMemo(() => {
-    const byId = new Map(
-      (vendorStats.vendors || []).map((row) => [Number(row.vendorId), row]),
-    )
-    const rows = vendorTrackings.map((t) => {
-      const vendorId = Number(t.vendor?.id ?? t.vendorId)
-      const vendor = t.vendor || {}
-      const stats = byId.get(vendorId)
-      byId.delete(vendorId)
-      return {
-        vendorId,
-        vendorName: stats?.vendorName || vendor.name || `Vendor #${vendorId}`,
-        vendorCode: stats?.vendorCode || vendor.code || null,
-        fireStatuses: effectiveCallbackStatuses(
-          t.allowedCallbackStatuses,
-          vendor,
-        ),
-        assignmentActive: t.active !== false,
-        payoutPercent: Number(stats?.payoutPercent ?? t.payoutPercent ?? 100),
-        totalClicks: stats?.totalClicks ?? 0,
-        requestedApi: stats?.requestedApi ?? 0,
-        verifiedApi: stats?.verifiedApi ?? 0,
-        failedApi: stats?.failedApi ?? 0,
-        failedVerify: stats?.failedVerify ?? stats?.pinValFailed ?? 0,
-        failedSend: stats?.failedSend ?? 0,
-        failedBreakdown: stats?.failedBreakdown || {},
-        failedVerifyBreakdown: stats?.failedVerifyBreakdown || {},
-        failedSendBreakdown: stats?.failedSendBreakdown || {},
-        convPercent: stats?.convPercent ?? 0,
-        pubConvPercent: stats?.pubConvPercent ?? 0,
-        pinRequest: stats?.pinRequest ?? 0,
-        pinSendSuccess: stats?.pinSendSuccess ?? 0,
-        uniquePinSend: stats?.uniquePinSend ?? 0,
-        pinValRequest: stats?.pinValRequest ?? 0,
-        uniquePinValRequest: stats?.uniquePinValRequest ?? 0,
-        pinValSuccess: stats?.pinValSuccess ?? 0,
-        pinValFailed: stats?.pinValFailed ?? stats?.failedVerify ?? 0,
-        uniquePinVal: stats?.uniquePinVal ?? 0,
-        sendConversion: stats?.sendConversion ?? 0,
-        advCrPercent: stats?.advCrPercent ?? 0,
-        pubCrPercent: stats?.pubCrPercent ?? 0,
-        homeView: stats?.homeView ?? 0,
-        subscribeClick: stats?.subscribeClick ?? 0,
-        cgRedirect: stats?.cgRedirect ?? 0,
-      }
-    })
-    for (const leftover of byId.values()) rows.push(leftover)
-    return rows
-  }, [vendorTrackings, vendorStats.vendors])
 
   if (loading) {
     return (

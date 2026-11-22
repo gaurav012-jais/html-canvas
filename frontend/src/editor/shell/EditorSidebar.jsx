@@ -190,8 +190,11 @@ export function EditorSidebar() {
     if (!editor) return
     editor.on('asset:add', refreshAssets)
     editor.on('asset:remove', refreshAssets)
-    if (tab === 'photos') refreshAssets()
+    const timer = setTimeout(() => {
+      if (tab === 'photos') refreshAssets()
+    }, 0)
     return () => {
+      clearTimeout(timer)
       editor.off('asset:add', refreshAssets)
       editor.off('asset:remove', refreshAssets)
     }

@@ -126,7 +126,9 @@ export function setupAssetUpload(editor) {
 
     const obs = editor._tc_asset_obs
     if (obs) {
-      try { obs.disconnect() } catch (_) {}
+      try { obs.disconnect() } catch (_) {
+        // ignore observer disconnect
+      }
       editor._tc_asset_obs = null
     }
 

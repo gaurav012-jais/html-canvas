@@ -40,10 +40,13 @@ function CampaignFlowSummary({ campaign, onSaveMode }) {
   const [saving, setSaving] = useState(false)
 
   useEffect(() => {
-    setDraftMode(currentMode)
-    setDraftEntry(savedEntry)
-    setDraftAfterIdentity(savedAfterIdentity)
-    setIsLocked(Boolean(campaign?.flowConfig?.isLocked ?? (currentMode === 'ORANGE_BF')))
+    const timer = setTimeout(() => {
+      setDraftMode(currentMode)
+      setDraftEntry(savedEntry)
+      setDraftAfterIdentity(savedAfterIdentity)
+      setIsLocked(Boolean(campaign?.flowConfig?.isLocked ?? (currentMode === 'ORANGE_BF')))
+    }, 0)
+    return () => clearTimeout(timer)
   }, [campaign?.id, currentMode, savedEntry, savedAfterIdentity, campaign?.flowConfig?.isLocked])
 
   const previewConfig = useMemo(() => {

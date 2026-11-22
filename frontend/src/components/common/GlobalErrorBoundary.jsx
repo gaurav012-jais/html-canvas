@@ -37,7 +37,7 @@ export default class GlobalErrorBoundary extends Component {
       if (typeof store.setSafeMode === 'function') {
         store.setSafeMode(true);
       }
-    } catch (e) {
+    } catch (_e) {
       console.warn('Safe mode not available');
     }
     this.setState({ hasError: false, error: null });

@@ -46,7 +46,9 @@ export function setupTextEditing(editor, onContentChange) {
       configureAsTextComponent(component);
       component.set('editable', true);
       editor.runCommand('core:rte');
-    } catch (_) {}
+    } catch (_) {
+      // ignore rte launch error
+    }
   });
 
   editor.on('component:update:content', notify);

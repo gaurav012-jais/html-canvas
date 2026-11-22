@@ -19,8 +19,8 @@ import AllowedCallbackStatusesField, {
   effectiveCallbackStatuses,
 } from '../../components/partners/AllowedCallbackStatusesField'
 import { buildTrackingUrl } from '../../services/api/partners'
-import { buildOtpExposeApiGuide, buildOtpExposeMarkdownGuide, clampPayoutPercent } from '../../services/api/otp'
-import { buildDcbExposeApiGuide, buildDcbExposeMarkdownGuide, buildDcbExposeUrls } from '../../services/api/dcb'
+import { buildOtpExposeMarkdownGuide, clampPayoutPercent } from '../../services/api/otp'
+import { buildDcbExposeMarkdownGuide, buildDcbExposeUrls } from '../../services/api/dcb'
 import { buildOrangeBfExposeMarkdownGuide } from './flows/OrangeBf'
 import { downloadTextFile } from '../../utils/download'
 import useStore from '../../store/useStore'
@@ -62,8 +62,8 @@ export default function VendorAssignModal({
   const downloadVendorApiGuide = (t, vendor) => {
     const vendorId = vendor?.id || t.vendor?.id
     const kind = actions.downloadApiGuide
-    let payload = ''
-    let prefix = 'api-guide'
+    let payload
+    let prefix
     if (kind === 'dcb') {
       prefix = 'dcb-api-guide'
       payload = buildDcbExposeMarkdownGuide({ origin, campaign, vendor, vendorId })

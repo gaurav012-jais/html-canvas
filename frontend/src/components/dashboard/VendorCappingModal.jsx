@@ -35,16 +35,19 @@ function VendorCappingModal({
 
   useEffect(() => {
     if (!isOpen) return
-    setCappingEnabledDraft(Boolean(tracking?.cappingEnabled))
-    setCappingMetricDraft(tracking?.cappingMetric || 'conversions')
-    setCappingLimitDraft(
-      tracking?.cappingLimit != null ? String(tracking.cappingLimit) : '',
-    )
-    setCappingActionDraft(tracking?.cappingAction || 'stop')
-    setFallbackCampaignIdDraft(
-      tracking?.fallbackCampaignId != null ? String(tracking.fallbackCampaignId) : '',
-    )
-    setCappingIntervalDraft(tracking?.cappingInterval || 'daily')
+    const timer = setTimeout(() => {
+      setCappingEnabledDraft(Boolean(tracking?.cappingEnabled))
+      setCappingMetricDraft(tracking?.cappingMetric || 'conversions')
+      setCappingLimitDraft(
+        tracking?.cappingLimit != null ? String(tracking.cappingLimit) : '',
+      )
+      setCappingActionDraft(tracking?.cappingAction || 'stop')
+      setFallbackCampaignIdDraft(
+        tracking?.fallbackCampaignId != null ? String(tracking.fallbackCampaignId) : '',
+      )
+      setCappingIntervalDraft(tracking?.cappingInterval || 'daily')
+    }, 0)
+    return () => clearTimeout(timer)
   }, [isOpen, tracking])
 
   const eligibleFallbackCampaigns = useMemo(() => {

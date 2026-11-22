@@ -126,7 +126,7 @@ export function isRestrictedKeyAllowed(e, restriction) {
   }
 
   if (restriction === 'email') {
-    return /^[a-zA-Z0-9@._+\-]$/.test(e.key)
+    return /^[a-zA-Z0-9@._+-]$/.test(e.key)
   }
 
   return true

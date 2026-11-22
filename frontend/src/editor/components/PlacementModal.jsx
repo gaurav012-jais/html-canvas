@@ -14,8 +14,11 @@ export function PlacementModal({
 
   useEffect(() => {
     if (isOpen) {
-      setSelected('inline')
-      setOverlayText('Your headline here')
+      const timer = setTimeout(() => {
+        setSelected('inline')
+        setOverlayText('Your headline here')
+      }, 0)
+      return () => clearTimeout(timer)
     }
   }, [isOpen, imageUrl])
 

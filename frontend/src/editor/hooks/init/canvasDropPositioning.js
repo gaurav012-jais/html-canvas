@@ -14,7 +14,7 @@ import {
   keepFlowButtonInFlow,
   isButtonLikeComponent,
 } from '../../utils/textSizeAlign'
-import { listSectionAnchorsOnPage } from '../../utils/sectionAnchor'
+import { autoSuggestAnchorOnUpdate } from './canvasAnchorDetection'
 import { getComp } from '../../utils/editorUtils'
 
 export function setupCanvasDropPositioning(ed, getIsMounted, refreshSelection) {
@@ -257,28 +257,7 @@ export function setupCanvasDropPositioning(ed, getIsMounted, refreshSelection) {
 
   const onComponentUpdate = (component) => {
     if (!getIsMounted()) return
-    const tag = (component.get('tagName') || '').toLowerCase()
-    const type = component.get('type') || ''
-    if (tag === 'a' || type === 'link') {
-      const text = (component.getEl?.()?.textContent || '').trim()
-      if (text) {
-        const href = component.getAttributes()?.href || ''
-        if (!href || href === '#' || href.startsWith('#')) {
-          const pageAnchors = listSectionAnchorsOnPage(ed, component)
-          const normalized = text
-            .toLowerCase()
-            .replace(/\s+/g, '-')
-            .replace(/[^a-z0-9_-]/g, '')
-          const common = ['features', 'pricing', 'contact', 'about', 'faq', 'services', 'hero']
-          if (pageAnchors.includes(normalized) || common.includes(normalized)) {
-            if (href !== `#${normalized}`) {
-              component.addAttributes({ href: `#${normalized}` })
-              refreshSelection()
-            }
-          }
-        }
-      }
-    }
+    autoSuggestAnchorOnUpdate(ed, component, refreshSelection)
   }
 
   ed.on('block:drag:start', onDragStart)

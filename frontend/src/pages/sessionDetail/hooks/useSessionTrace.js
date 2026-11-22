@@ -27,7 +27,14 @@ export function useSessionTrace() {
   }, [visitId])
 
   useEffect(() => {
-    load()
+    let active = true
+    const timer = setTimeout(() => {
+      if (active) load()
+    }, 0)
+    return () => {
+      active = false
+      clearTimeout(timer)
+    }
   }, [load])
 
   const visit = detail?.visit

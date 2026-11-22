@@ -146,7 +146,9 @@ export function setTextContent(component, value, _editor) {
   if (children && children.length > 0) {
     try {
       children.reset();
-    } catch (_) {}
+    } catch (_) {
+      // ignore reset error
+    }
   }
   setModelContent(component, value);
   syncComponentDomText(component, value);

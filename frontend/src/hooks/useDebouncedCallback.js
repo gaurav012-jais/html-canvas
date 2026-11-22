@@ -3,7 +3,10 @@ import { useState, useCallback, useRef, useEffect } from 'react'
 export function useDebouncedCallback(fn, delay = 300) {
   const timer = useRef(null)
   const fnRef = useRef(fn)
-  fnRef.current = fn
+
+  useEffect(() => {
+    fnRef.current = fn
+  })
 
   useEffect(() => () => { if (timer.current) clearTimeout(timer.current) }, [])
 

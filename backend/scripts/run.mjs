@@ -18,6 +18,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SCRIPT_REGISTRY = {
   // Database Setup & Migrations
   'setup-db': { file: 'db/setup-db.mjs', desc: 'Create and initialize database tables' },
+  'seed': { file: 'db/seed.mjs', desc: 'Unified database seeder (all, campaign, dummy, vendors)' },
   'migrate-dcb-confirm-endpoint': { file: 'db/migrate-dcb-confirm-endpoint.js', desc: 'Migrate DCB confirm endpoint config' },
 
   // Reports & Analytics Export
@@ -59,7 +60,7 @@ function printHelp() {
   console.log('Available Commands:\n');
 
   const categories = {
-    'Database & Migrations': ['setup-db', 'migrate-dcb-confirm-endpoint'],
+    'Database & Migrations': ['setup-db', 'seed', 'migrate-dcb-confirm-endpoint'],
     'Reports & Exports': ['generate-burkina-faso-excel', 'generate-zain-excel', 'generate-zain-pdf'],
     'Testing & E2E': ['test-apis', 'e2e-detect-flow', 'e2e-he-subscribe-flow', 'e2e-start-config-flow', 'test-delayed-checksub-e2e', 'test-dcb-gateway', 'test-dcb-manual'],
     'Diagnostics & Debug': ['inspect-camp33', 'inspect-conversions', 'reset-camp33-dcb', 'reset-otp-local'],

@@ -223,7 +223,9 @@ export function setDcbEditorPreview(editor, mode) {
         .forEach((el) => {
           el.style.removeProperty('display')
         })
-    } catch (_) {}
+    } catch (_) {
+      // ignore DOM manipulation errors in preview
+    }
     return
   }
   const isPinOrOtp = mode === 'pin' || mode === 'otp'
@@ -290,5 +292,7 @@ export function setDcbEditorPreview(editor, mode) {
         if (group) group.style.removeProperty('display')
       })
     }
-  } catch (_) {}
+  } catch (_) {
+    // ignore DOM manipulation errors in preview
+  }
 }

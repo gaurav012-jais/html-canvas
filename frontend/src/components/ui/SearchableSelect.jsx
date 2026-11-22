@@ -34,10 +34,11 @@ export default function SearchableSelect({
   // Focus search input when dropdown opens
   useEffect(() => {
     if (isOpen) {
-      setSearchTerm('')
-      setTimeout(() => {
+      const timer = setTimeout(() => {
+        setSearchTerm('')
         searchInputRef.current?.focus()
-      }, 50)
+      }, 0)
+      return () => clearTimeout(timer)
     }
   }, [isOpen])
 

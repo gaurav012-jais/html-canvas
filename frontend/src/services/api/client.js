@@ -96,7 +96,7 @@ export async function apiClient(path, options = {}) {
       return unwrapResponse(json)
     } catch (err) {
       if (err.name === 'AbortError') {
-        throw new Error('Network timeout. Please check your connection and try again.')
+        throw new Error('Network timeout. Please check your connection and try again.', { cause: err })
       }
       throw err
     } finally {

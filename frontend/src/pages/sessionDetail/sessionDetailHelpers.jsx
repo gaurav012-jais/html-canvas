@@ -207,7 +207,9 @@ export function getRequestPayload(call) {
       const search = call.requestUrl.slice(qIndex + 1)
       const params = Object.fromEntries(new URLSearchParams(search).entries())
       if (Object.keys(params).length > 0) return params
-    } catch {}
+    } catch {
+      // ignore invalid URL search params
+    }
   }
   return null
 }

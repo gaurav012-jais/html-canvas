@@ -13,7 +13,8 @@ import { redisService } from '../../../common/services/redis.service.js';
 import { flowHasConfirmNode, isPacksOnHome } from '../routing/funnel-layout.js';
 import { recordCgRedirectHop } from '../helpers/cg-redirect-log.js';
 import { resolveFlowOrBoth, wapBlockedError } from '../flows/index.js';
-import { cappingService } from '../../campaigns/capping.service.js';
+import { evaluateLandingCappingFallback } from './capping-fallback.js';
+import { fetchCachedApiConfig } from './page-resolver-helpers.js';
 
 export function createGetPage(deps) {
   const {
@@ -63,83 +64,22 @@ export function createGetPage(deps) {
       null,
     );
 
-    // Initial click landing: evaluate capping & vendor assignment
-    if (!input.visitId) {
-      const cappingResult = await cappingService.evaluateCapping(campaign, {
-        vid: input.vid,
-      });
-
-      if (cappingResult.isCapped) {
-        if (
-          cappingResult.action === 'fallback' &&
-          cappingResult.targetCampaign
-        ) {
-          const target = cappingResult.targetCampaign;
-          const targetCountry =
-            target.marketOperator?.country?.name || target.country;
-          const targetOperator =
-            target.marketOperator?.name || target.operator;
-
-          const queryParams = new URLSearchParams();
-          if (targetCountry) queryParams.set('country', targetCountry);
-          if (targetOperator) queryParams.set('operator', targetOperator);
-          queryParams.set('campid', String(target.id));
-          if (input.vid) queryParams.set('vid', input.vid);
-          if (input.affId) queryParams.set('aff_id', input.affId);
-          if (input.clickId) queryParams.set('click_id', input.clickId);
-          if (input.rcid) queryParams.set('rcid', input.rcid);
-          if (input.pack) queryParams.set('pack', input.pack);
-
-          const fallbackUrl = `/subscription?${queryParams.toString()}`;
-
-          // Immediately redirect browser to target campaign without creating visit on Offer 1
-          return {
-            campaignId: campaign.id,
-            visitId: null,
-            pageType: CampaignPageType.HOME,
-            entryPage: flowEngineService.getEntryPage(flowConfigEarly),
-            templateId: null,
-            html: '',
-            css: '',
-            variables: {},
-            actions: [],
-            pack: normalizePack(input.pack),
-            projectData: {},
-            cgRedirectUrl: null,
-            subscriptionUrl: null,
-            externalRedirect: fallbackUrl,
-            clickId: input.clickId || null,
-            rcid: input.rcid || null,
-          };
-        }
-
-        // Action is STOP (or vendor was not assigned to target offer)
-        const err = new Error('This offer has been stopped');
-        err.statusCode = 403;
-        err.code = 'OFFER_STOPPED';
-        throw err;
-      }
+    const cappingFallbackResponse = await evaluateLandingCappingFallback({
+      campaign,
+      input,
+      flowConfigEarly,
+      normalizePack,
+    });
+    if (cappingFallbackResponse) {
+      return cappingFallbackResponse;
     }
 
-    const apiConfigCacheKey = `flow:config:${campaign.id}`;
-    let apiConfig = null;
-    if (isFlowCacheEnabled()) {
-      apiConfig = await redisService.get(apiConfigCacheKey);
-    }
-    if (apiConfig === null || !isFlowCacheEnabled()) {
-      apiConfig = await getApiConfigRepo().findOne({
-        where: { campaignId: campaign.id },
-      });
-      if (isFlowCacheEnabled()) {
-        await redisService.set(
-          apiConfigCacheKey,
-          apiConfig ?? '__NULL__',
-          getFlowCacheTtl?.() || 600,
-        );
-      }
-    } else if (apiConfig === '__NULL__') {
-      apiConfig = null;
-    }
+    const apiConfig = await fetchCachedApiConfig({
+      campaignId: campaign.id,
+      isFlowCacheEnabled,
+      getFlowCacheTtl,
+      getApiConfigRepo,
+    });
 
     const flowConfig = flowEngineService.parseFlowConfig(campaign.flowConfig);
     const entryPage = flowEngineService.getEntryPage(flowConfig);

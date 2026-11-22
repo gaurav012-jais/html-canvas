@@ -32,27 +32,20 @@ function CampaignCappingModal({ isOpen, onClose, campaignId }) {
 
   useEffect(() => {
     if (!campaign || String(campaign.id) !== String(campaignId)) return
-    setCappingEnabledDraft(Boolean(campaign.cappingEnabled))
-    setCappingMetricDraft(campaign.cappingMetric || 'conversions')
-    setCappingLimitDraft(
-      campaign.cappingLimit != null ? String(campaign.cappingLimit) : '',
-    )
-    setCappingActionDraft(campaign.cappingAction || 'stop')
-    setFallbackCampaignIdDraft(
-      campaign.fallbackCampaignId != null ? String(campaign.fallbackCampaignId) : '',
-    )
-    setCappingIntervalDraft(campaign.cappingInterval || 'daily')
-  }, [
-    campaignId,
-    campaign?.id,
-    campaign?.cappingEnabled,
-    campaign?.cappingMetric,
-    campaign?.cappingLimit,
-    campaign?.cappingAction,
-    campaign?.fallbackCampaignId,
-    campaign?.cappingInterval,
-    isOpen,
-  ])
+    const timer = setTimeout(() => {
+      setCappingEnabledDraft(Boolean(campaign.cappingEnabled))
+      setCappingMetricDraft(campaign.cappingMetric || 'conversions')
+      setCappingLimitDraft(
+        campaign.cappingLimit != null ? String(campaign.cappingLimit) : '',
+      )
+      setCappingActionDraft(campaign.cappingAction || 'stop')
+      setFallbackCampaignIdDraft(
+        campaign.fallbackCampaignId != null ? String(campaign.fallbackCampaignId) : '',
+      )
+      setCappingIntervalDraft(campaign.cappingInterval || 'daily')
+    }, 0)
+    return () => clearTimeout(timer)
+  }, [campaign, campaignId, isOpen])
 
   const isCurrentApiExpose = isApiExposeCampaign(campaign)
 

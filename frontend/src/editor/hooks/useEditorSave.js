@@ -10,12 +10,16 @@ export function commitActiveRte(ed) {
     if (ed.Commands?.isActive?.('core:rte')) {
       ed.Commands.stop('core:rte')
     }
-  } catch (_) {}
+  } catch (_) {
+    // ignore rte stop error
+  }
   try {
     if (ed.rte?.end) {
       ed.rte.end()
     }
-  } catch (_) {}
+  } catch (_) {
+    // ignore rte end error
+  }
 }
 
 export function useEditorSave({ editorRef, callbacksRef }) {

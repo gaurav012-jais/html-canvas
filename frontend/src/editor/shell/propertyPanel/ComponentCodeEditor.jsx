@@ -7,7 +7,7 @@ export function formatHtml(html) {
   html.split(/>\s*</).forEach((element) => {
     if (element.match(/^\/\w/)) tab = tab.substring(2)
     result += tab + '<' + element + '>\r\n'
-    if (element.match(/^<?\w[^>]*[^\/]$/) && !element.startsWith('input') && !element.startsWith('img') && !element.startsWith('br') && !element.startsWith('hr')) tab += '  '
+    if (element.match(/^<?\w[^>]*[^/]$/) && !element.startsWith('input') && !element.startsWith('img') && !element.startsWith('br') && !element.startsWith('hr')) tab += '  '
   })
   return result.substring(1, result.length - 3)
 }
@@ -20,11 +20,14 @@ export function ComponentCodeEditor({ selected, editor, update }) {
   useEffect(() => {
     if (!selected) return
     const raw = selected.toHTML()
-    try {
-      setCode(formatHtml(raw))
-    } catch {
-      setCode(raw)
-    }
+    const timer = setTimeout(() => {
+      try {
+        setCode(formatHtml(raw))
+      } catch {
+        setCode(raw)
+      }
+    }, 0)
+    return () => clearTimeout(timer)
   }, [selected])
 
   const handleApply = () => {

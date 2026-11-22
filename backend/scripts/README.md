@@ -7,9 +7,10 @@ This directory contains standalone operational, maintenance, database, testing, 
 ### `db/` — Database Setup, Seeds, & Migrations
 
 - `setup-db.mjs`: Creates database using root credentials from `.env`. Run with `npm run db:setup`.
-- `seed_proper_campaign.js` (alias: `seed-campaign.mjs`): Seeds a complete production-like campaign with all funnel pages and API configs.
-- `seed_dummy.js` (alias: `seed-dummy.mjs`): Seeds initial dummy countries, operators, and campaigns.
-- `seed_vendors.js` (alias: `seed-vendors.mjs`): Seeds test vendors, affiliates, and campaign trackings.
+- `seed.mjs`: Unified database seeder. Run all (`node backend/scripts/db/seed.mjs` or `npm run script seed`) or specific target (`campaign`, `dummy`, `vendors`).
+- `seed_proper_campaign.js`: Seeds a complete production-like campaign with all funnel pages and API configs.
+- `seed_dummy.js`: Seeds initial dummy countries, operators, and campaigns.
+- `seed_vendors.js`: Seeds test vendors, affiliates, and campaign trackings.
 - `migrate-dcb-confirm-endpoint.js`: Migration script to update DCB confirmation endpoint configs.
 
 ### `reports/` — Analytics & Export Generators

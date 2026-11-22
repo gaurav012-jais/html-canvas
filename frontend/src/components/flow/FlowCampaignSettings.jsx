@@ -46,41 +46,45 @@ function FlowCampaignSettings({ campaignId }) {
 
   useEffect(() => {
     if (!campaign || String(campaign.id) !== String(campaignId)) return
-    setCgUrlDraft(campaign.cgRedirectUrl || '')
-    setSuccessUrlDraft(campaign.successRedirectUrl || '')
-    setSuccessModeDraft(
-      campaign.successRedirectMode === 'immediate' ? 'immediate' : 'thankyou',
-    )
-    const v = campaign.postbackRegisterAt
-    setPostbackAtDraft(v === 'otp' || v === 'both' ? v : 'confirm')
-    setFunnelLayoutDraft(
-      campaign.funnelLayout === 'packs_on_home' ? 'packs_on_home' : 'classic',
-    )
-    setCappingEnabledDraft(Boolean(campaign.cappingEnabled))
-    setCappingMetricDraft(campaign.cappingMetric || 'conversions')
-    setCappingLimitDraft(
-      campaign.cappingLimit != null ? String(campaign.cappingLimit) : '',
-    )
-    setCappingActionDraft(campaign.cappingAction || 'stop')
-    setFallbackCampaignIdDraft(
-      campaign.fallbackCampaignId != null ? String(campaign.fallbackCampaignId) : '',
-    )
-    setCappingIntervalDraft(campaign.cappingInterval || 'daily')
-  }, [
-    campaignId,
-    campaign?.id,
-    campaign?.cgRedirectUrl,
-    campaign?.successRedirectUrl,
-    campaign?.successRedirectMode,
-    campaign?.postbackRegisterAt,
-    campaign?.funnelLayout,
-    campaign?.cappingEnabled,
-    campaign?.cappingMetric,
-    campaign?.cappingLimit,
-    campaign?.cappingAction,
-    campaign?.fallbackCampaignId,
-    campaign?.cappingInterval,
-  ])
+    const timer = setTimeout(() => {
+      setCgUrlDraft(campaign.cgRedirectUrl || '')
+      setSuccessUrlDraft(campaign.successRedirectUrl || '')
+      setSuccessModeDraft(
+        campaign.successRedirectMode === 'immediate' ? 'immediate' : 'thankyou',
+      )
+      const v = campaign.postbackRegisterAt
+      setPostbackAtDraft(v === 'otp' || v === 'both' ? v : 'confirm')
+      setFunnelLayoutDraft(
+        campaign.funnelLayout === 'packs_on_home' ? 'packs_on_home' : 'classic',
+      )
+      setCappingEnabledDraft(Boolean(campaign.cappingEnabled))
+      setCappingMetricDraft(campaign.cappingMetric || 'conversions')
+      setCappingLimitDraft(
+        campaign.cappingLimit != null ? String(campaign.cappingLimit) : '',
+      )
+      setCappingActionDraft(campaign.cappingAction || 'stop')
+      setFallbackCampaignIdDraft(
+        campaign.fallbackCampaignId != null ? String(campaign.fallbackCampaignId) : '',
+      )
+      setCappingIntervalDraft(campaign.cappingInterval || 'daily')
+    }, 0)
+    return () => clearTimeout(timer)
+  }, [campaignId, campaign])
+
+  const eligibleFallbackCampaigns = useMemo(() => {
+    if (!campaign) return []
+    return getEligibleFallbackCampaigns(campaign, campaigns)
+  }, [campaign, campaigns])
+
+  const selectedTargetCampaign = useMemo(() => {
+    if (!fallbackCampaignIdDraft || !campaigns) return null
+    return campaigns.find((c) => String(c.id) === String(fallbackCampaignIdDraft)) || null
+  }, [fallbackCampaignIdDraft, campaigns])
+
+  const { mappedCount, totalAssigned, unmappedCount } = useMemo(() => {
+    if (!campaign) return { mappedCount: 0, totalAssigned: 0, unmappedCount: 0 }
+    return calculateVendorCoverage(campaign, selectedTargetCampaign)
+  }, [campaign, selectedTargetCampaign])
 
   if (!campaign || String(campaign.id) !== String(campaignId)) return null
 
@@ -154,19 +158,6 @@ function FlowCampaignSettings({ campaignId }) {
   }
 
   const isCurrentApiExpose = isApiExposeCampaign(campaign)
-
-  const eligibleFallbackCampaigns = useMemo(() => {
-    return getEligibleFallbackCampaigns(campaign, campaigns)
-  }, [campaign, campaigns])
-
-  const selectedTargetCampaign = useMemo(() => {
-    if (!fallbackCampaignIdDraft || !campaigns) return null
-    return campaigns.find((c) => String(c.id) === String(fallbackCampaignIdDraft)) || null
-  }, [fallbackCampaignIdDraft, campaigns])
-
-  const { mappedCount, totalAssigned, unmappedCount } = useMemo(() => {
-    return calculateVendorCoverage(campaign, selectedTargetCampaign)
-  }, [campaign, selectedTargetCampaign])
 
   const hasCappingChanges =
     cappingEnabledDraft !== Boolean(campaign.cappingEnabled) ||

@@ -208,7 +208,14 @@ export function useDashboardMetrics() {
   )
 
   useEffect(() => {
-    fetchDashboardData()
+    let active = true
+    const timer = setTimeout(() => {
+      if (active) fetchDashboardData()
+    }, 0)
+    return () => {
+      active = false
+      clearTimeout(timer)
+    }
   }, [fetchDashboardData])
 
   const totalVisits = Number(postbackStats?.visits) || 0

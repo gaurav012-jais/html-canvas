@@ -219,7 +219,7 @@ export function PriorityChainTrigger({
   }, [openSignal])
 
   const attrs = selected?.getAttributes?.() || {}
-  let count = 0
+  let count
   let ruleCount = 0
   try {
     const actions = JSON.parse(attrs['data-actions'] || '[]')
