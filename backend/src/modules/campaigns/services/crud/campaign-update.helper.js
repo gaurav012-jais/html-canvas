@@ -12,7 +12,9 @@ export const persistCampaign = async (campaign, getCampaignRepo) => {
   delete campaign.marketOperator;
   delete campaign.user;
   try {
-    return await getCampaignRepo().save(campaign);
+    const repo =
+      typeof getCampaignRepo === 'function' ? getCampaignRepo() : getCampaignRepo;
+    return await repo.save(campaign);
   } finally {
     campaign.trackings = trackings;
     campaign.pages = pages;

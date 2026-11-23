@@ -69,7 +69,7 @@ export const createCampaignCrudService = (deps = {}) => {
   });
 
   const persistCampaign = (campaign) =>
-    persistCampaignHelper(campaign, getCampaignRepo());
+    persistCampaignHelper(campaign, getCampaignRepo);
 
   const create = async (dto, userId) =>
     createCampaignWithPages(dto, userId, {
