@@ -27,12 +27,29 @@ export const reserveOtpSend = async (client, phone, config = {}) => {
     throw err;
   }
 
+  const isDev = (process.env.NODE_ENV || 'development') !== 'production';
+
+  // In development / local testing: if Redis is not running or not ready, fail-open with a warning so testing is not blocked
+  if (!client || client.status !== 'ready') {
+    if (isDev) {
+      console.warn(
+        `[OTP Send-Limit] Redis is not connected (status: ${client?.status || 'none'}). Skipping rate limit in development mode.`,
+      );
+      return;
+    }
+  }
+
   let result;
   try {
-    // Do not use the cache helpers: their fail-open fallback bypasses the limit.
     if (!client) throw new Error('Redis unavailable');
     result = await client.eval(RESERVE_SEND, 1, `otp:send-limit:${msisdn}`);
-  } catch {
+  } catch (evalErr) {
+    if (isDev) {
+      console.warn(
+        `[OTP Send-Limit] Redis rate limit check failed: ${evalErr.message}. Skipping rate limit in development mode.`,
+      );
+      return;
+    }
     const err = new Error(
       configuredMessage(
         config.otpUnavailableMessage,
