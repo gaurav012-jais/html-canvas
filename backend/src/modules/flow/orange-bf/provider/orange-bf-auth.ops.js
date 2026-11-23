@@ -46,6 +46,9 @@ export const createOrangeBfAuthOps = (request) => ({
 
     if (customSendUrl) {
       url = resolveTemplate(customSendUrl, templateVars);
+      if (method === 'GET' && !url.includes('msisdn=')) {
+        params = { msisdn, language: templateVars.language };
+      }
     } else {
       url = `${baseUrl.replace(/\/$/, '')}/subapi/auth/otp/generate`;
       if (method === 'GET') {
@@ -123,6 +126,9 @@ export const createOrangeBfAuthOps = (request) => ({
 
     if (customVerifyUrl) {
       url = resolveTemplate(customVerifyUrl, templateVars);
+      if (method === 'GET' && !url.includes('msisdn=')) {
+        params = { msisdn, otp: templateVars.otp };
+      }
     } else {
       url = `${baseUrl.replace(/\/$/, '')}/subapi/auth/otp/validate`;
       if (method === 'GET') {

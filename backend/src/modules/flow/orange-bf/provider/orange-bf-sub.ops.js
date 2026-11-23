@@ -42,6 +42,9 @@ export const createOrangeBfSubOps = (request) => ({
 
     if (customChecksubUrl) {
       url = resolveTemplate(customChecksubUrl, templateVars);
+      if (method === 'GET' && !url.includes('msisdn=')) {
+        params = { msisdn, serviceId: svcId };
+      }
     } else {
       url = `${baseUrl.replace(/\/$/, '')}/subapi/checksub`;
       if (method === 'GET') {
@@ -95,6 +98,9 @@ export const createOrangeBfSubOps = (request) => ({
 
     if (customUnsubUrl) {
       url = resolveTemplate(customUnsubUrl, templateVars);
+      if (method === 'GET' && !url.includes('msisdn=')) {
+        params = { msisdn, serviceId: svcId };
+      }
     } else {
       url = `${baseUrl.replace(/\/$/, '')}/subapi/unsub`;
       if (method === 'GET') {
@@ -164,6 +170,18 @@ export const createOrangeBfSubOps = (request) => ({
 
     if (customSyncUrl) {
       url = resolveTemplate(customSyncUrl, templateVars);
+      if (method === 'GET' && !url.includes('msisdn=')) {
+        params = {
+          msisdn,
+          subServiceId: templateVars.subServiceId,
+          serviceId: templateVars.serviceId,
+          cpId: templateVars.cpId,
+          channel: templateVars.channel,
+          country: templateVars.country,
+          operator: templateVars.operator,
+          reqType: templateVars.reqType,
+        };
+      }
     } else {
       url = `${baseUrl.replace(/\/$/, '')}/Subs_Engine/subscription/sync`;
       if (method === 'GET') {
