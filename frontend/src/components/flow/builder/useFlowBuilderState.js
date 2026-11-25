@@ -113,34 +113,37 @@ export function useFlowBuilderState({
   )
 
   const addNode = useCallback(
-    createAddNodeHandler({
-      nodes,
-      setNodes,
-      setEdges,
-      mode,
-      isLocked,
-      existingPageTypes,
-    }),
-    [existingPageTypes, nodes.length, setNodes, setEdges, mode, isLocked],
+    (pageType) =>
+      createAddNodeHandler({
+        nodes,
+        setNodes,
+        setEdges,
+        mode,
+        isLocked,
+        existingPageTypes,
+      })(pageType),
+    [existingPageTypes, nodes, setNodes, setEdges, mode, isLocked],
   )
 
   const removeNode = useCallback(
-    createRemoveNodeHandler({
-      nodes,
-      setNodes,
-      setEdges,
-      setSelectedNodeId,
-      entryPage,
-      setEntryPage,
-      addToast,
-      isLocked,
-    }),
-    [setNodes, setEdges, addToast, nodes, entryPage, isLocked],
+    (nodeId) =>
+      createRemoveNodeHandler({
+        nodes,
+        setNodes,
+        setEdges,
+        setSelectedNodeId,
+        entryPage,
+        setEntryPage,
+        addToast,
+        isLocked,
+      })(nodeId),
+    [setNodes, setEdges, setSelectedNodeId, addToast, nodes, entryPage, setEntryPage, isLocked],
   )
 
   const patchStartConfig = useCallback(
-    createPatchStartConfigHandler({ mode, setNodes, setStartConfig, isLocked }),
-    [mode, setNodes, isLocked],
+    (patch) =>
+      createPatchStartConfigHandler({ mode, setNodes, setStartConfig, isLocked })(patch),
+    [mode, setNodes, setStartConfig, isLocked],
   )
 
   const editNode = useCallback(

@@ -1,3 +1,5 @@
+import { ensureColumn, isColumnNullable } from './migration-helpers.js';
+
 export class AddOtpConfigAndColumns1760000000002 {
   name = 'AddOtpConfigAndColumns1760000000002';
 
@@ -5,39 +7,43 @@ export class AddOtpConfigAndColumns1760000000002 {
     const isPostgres = queryRunner.connection.options.type === 'postgres';
 
     if (isPostgres) {
-      await queryRunner.query(`
-        ALTER TABLE "otp_requests" 
-        ADD COLUMN "campaign_id" integer,
-        ADD COLUMN "provider" varchar,
-        ADD COLUMN "provider_request_id" varchar,
-        ADD COLUMN "status" varchar NOT NULL DEFAULT 'pending',
-        ADD COLUMN "verified_at" TIMESTAMP,
-        ADD COLUMN "updated_at" TIMESTAMP NOT NULL DEFAULT now(),
-        ALTER COLUMN "otp_salt" DROP NOT NULL,
-        ALTER COLUMN "visit_id" TYPE integer USING (visit_id::integer)
-      `);
-      await queryRunner.query(`
-        ALTER TABLE "api_configs" 
-        ADD COLUMN "otp_provider" varchar,
-        ADD COLUMN "otp_config_json" text
-      `);
+      if (await queryRunner.hasTable('otp_requests')) {
+        await ensureColumn(queryRunner, 'otp_requests', 'campaign_id', `ALTER TABLE "otp_requests" ADD COLUMN "campaign_id" integer`);
+        await ensureColumn(queryRunner, 'otp_requests', 'provider', `ALTER TABLE "otp_requests" ADD COLUMN "provider" varchar`);
+        await ensureColumn(queryRunner, 'otp_requests', 'provider_request_id', `ALTER TABLE "otp_requests" ADD COLUMN "provider_request_id" varchar`);
+        await ensureColumn(queryRunner, 'otp_requests', 'status', `ALTER TABLE "otp_requests" ADD COLUMN "status" varchar NOT NULL DEFAULT 'pending'`);
+        await ensureColumn(queryRunner, 'otp_requests', 'verified_at', `ALTER TABLE "otp_requests" ADD COLUMN "verified_at" TIMESTAMP`);
+        await ensureColumn(queryRunner, 'otp_requests', 'updated_at', `ALTER TABLE "otp_requests" ADD COLUMN "updated_at" TIMESTAMP NOT NULL DEFAULT now()`);
+        if (!(await isColumnNullable(queryRunner, 'otp_requests', 'otp_salt'))) {
+          await queryRunner.query(`ALTER TABLE "otp_requests" ALTER COLUMN "otp_salt" DROP NOT NULL`);
+        }
+        const visitCols = await queryRunner.query(
+          `SELECT data_type FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'otp_requests' AND column_name = 'visit_id' LIMIT 1`,
+        );
+        if (visitCols[0]?.data_type !== 'integer') {
+          await queryRunner.query(
+            `ALTER TABLE "otp_requests" ALTER COLUMN "visit_id" TYPE integer USING (CASE WHEN "visit_id"::text ~ '^[0-9]+$' THEN "visit_id"::text::integer ELSE NULL END)`,
+          );
+        }
+      }
+      if (await queryRunner.hasTable('api_configs')) {
+        await ensureColumn(queryRunner, 'api_configs', 'otp_provider', `ALTER TABLE "api_configs" ADD COLUMN "otp_provider" varchar`);
+        await ensureColumn(queryRunner, 'api_configs', 'otp_config_json', `ALTER TABLE "api_configs" ADD COLUMN "otp_config_json" text`);
+      }
     } else {
-      await queryRunner.query(`
-        ALTER TABLE \`otp_requests\` 
-        ADD COLUMN \`campaign_id\` int NULL,
-        ADD COLUMN \`provider\` varchar(32) NULL,
-        ADD COLUMN \`provider_request_id\` varchar(255) NULL,
-        ADD COLUMN \`status\` varchar(32) NOT NULL DEFAULT 'pending',
-        ADD COLUMN \`verified_at\` datetime(6) NULL,
-        ADD COLUMN \`updated_at\` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
-        MODIFY COLUMN \`otp_salt\` varchar(64) NULL,
-        MODIFY COLUMN \`visit_id\` int NULL
-      `);
-      await queryRunner.query(`
-        ALTER TABLE \`api_configs\`
-        ADD COLUMN \`otp_provider\` varchar(32) NULL,
-        ADD COLUMN \`otp_config_json\` text NULL
-      `);
+      if (await queryRunner.hasTable('otp_requests')) {
+        await ensureColumn(queryRunner, 'otp_requests', 'campaign_id', `ALTER TABLE \`otp_requests\` ADD COLUMN \`campaign_id\` int NULL`);
+        await ensureColumn(queryRunner, 'otp_requests', 'provider', `ALTER TABLE \`otp_requests\` ADD COLUMN \`provider\` varchar(32) NULL`);
+        await ensureColumn(queryRunner, 'otp_requests', 'provider_request_id', `ALTER TABLE \`otp_requests\` ADD COLUMN \`provider_request_id\` varchar(255) NULL`);
+        await ensureColumn(queryRunner, 'otp_requests', 'status', `ALTER TABLE \`otp_requests\` ADD COLUMN \`status\` varchar(32) NOT NULL DEFAULT 'pending'`);
+        await ensureColumn(queryRunner, 'otp_requests', 'verified_at', `ALTER TABLE \`otp_requests\` ADD COLUMN \`verified_at\` datetime(6) NULL`);
+        await ensureColumn(queryRunner, 'otp_requests', 'updated_at', `ALTER TABLE \`otp_requests\` ADD COLUMN \`updated_at\` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6)`);
+        await queryRunner.query(`ALTER TABLE \`otp_requests\` MODIFY COLUMN \`otp_salt\` varchar(64) NULL, MODIFY COLUMN \`visit_id\` int NULL`);
+      }
+      if (await queryRunner.hasTable('api_configs')) {
+        await ensureColumn(queryRunner, 'api_configs', 'otp_provider', `ALTER TABLE \`api_configs\` ADD COLUMN \`otp_provider\` varchar(32) NULL`);
+        await ensureColumn(queryRunner, 'api_configs', 'otp_config_json', `ALTER TABLE \`api_configs\` ADD COLUMN \`otp_config_json\` text NULL`);
+      }
     }
   }
 

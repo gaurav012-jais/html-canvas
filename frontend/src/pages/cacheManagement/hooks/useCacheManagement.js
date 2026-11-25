@@ -40,10 +40,11 @@ export function useCacheManagement() {
   }, [addToast])
 
   const fetchKeys = useCallback(
-    async (patternToScan) => {
+    async (patternToScan = '*') => {
+      const pattern = String(patternToScan || '*').trim() || '*'
       setLoadingKeys(true)
       try {
-        const data = await listCacheKeys(patternToScan || scanPattern)
+        const data = await listCacheKeys({ pattern, limit: 100 })
         setKeysList(Array.isArray(data) ? data : data?.keys || [])
       } catch (err) {
         addToast(err.message || 'Failed to list cache keys', 'error')
@@ -51,7 +52,7 @@ export function useCacheManagement() {
         setLoadingKeys(false)
       }
     },
-    [scanPattern, addToast],
+    [addToast],
   )
 
   useEffect(() => {
@@ -94,7 +95,10 @@ export function useCacheManagement() {
     const scopeToPurge = confirmModal.scope
     setPurgingScope(scopeToPurge)
     try {
-      await clearCache(scopeToPurge)
+      await clearCache({
+        scope: scopeToPurge,
+        pattern: scopeToPurge === 'custom' ? confirmModal.pattern : '',
+      })
       addToast(
         scopeToPurge === 'all'
           ? 'Entire cache flushed successfully'
@@ -102,7 +106,7 @@ export function useCacheManagement() {
         'success',
       )
       setConfirmModal((prev) => ({ ...prev, isOpen: false }))
-      await Promise.all([fetchStats(), fetchKeys()])
+      await Promise.all([fetchStats(), fetchKeys(scanPattern)])
     } catch (err) {
       addToast(err.message || 'Failed to clear cache', 'error')
     } finally {

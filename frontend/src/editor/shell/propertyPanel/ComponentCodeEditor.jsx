@@ -33,7 +33,11 @@ export function ComponentCodeEditor({ selected, editor, update }) {
   const handleApply = () => {
     if (!selected || !editor) return
     try {
-      selected.replaceWith(code)
+      const replaced = selected.replaceWith(code)
+      const nextSelected = Array.isArray(replaced) ? replaced[0] : replaced
+      if (nextSelected) {
+        editor.select(nextSelected)
+      }
       setApplied(true)
       setTimeout(() => setApplied(false), 2000)
       update()

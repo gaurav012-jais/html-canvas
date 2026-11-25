@@ -50,12 +50,17 @@ export function usePropsWidth(advancedMode) {
   const startXRef = useRef(0)
   const startWidthRef = useRef(PROPS_WIDTH_DEFAULT)
 
+  const effectiveWidth =
+    advancedMode && width < PROPS_WIDTH_ADVANCED_MIN
+      ? PROPS_WIDTH_ADVANCED_MIN
+      : width
+
   const startResize = useCallback(
     (e) => {
       e.preventDefault()
       isResizingRef.current = true
       startXRef.current = e.clientX
-      startWidthRef.current = width
+      startWidthRef.current = effectiveWidth
       document.body.classList.add('select-none')
 
       const handleMove = (ev) => {
@@ -84,13 +89,8 @@ export function usePropsWidth(advancedMode) {
       window.addEventListener('mousemove', handleMove)
       window.addEventListener('mouseup', handleUp)
     },
-    [width],
+    [effectiveWidth],
   )
-
-  const effectiveWidth =
-    advancedMode && width < PROPS_WIDTH_ADVANCED_MIN
-      ? PROPS_WIDTH_ADVANCED_MIN
-      : width
 
   return { width: effectiveWidth, startResize }
 }

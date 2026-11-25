@@ -9,6 +9,7 @@ import EmptyState from '../components/ui/EmptyState'
 import { CreateMarketCampaignModal, EditCampaignModal } from './markets/MarketCampaignModals'
 import * as marketsApi from '../services/api/markets'
 import { campaignDetailPath } from '../utils/routes'
+import useStore from '../store/useStore'
 
 function MarketCampaignsPage() {
   const { countryCode: routeCountry, operatorCode: routeOperator } = useParams()
@@ -16,6 +17,7 @@ function MarketCampaignsPage() {
   const operatorCode = (routeOperator || '').toUpperCase()
 
   const navigate = useNavigate()
+  const addToast = useStore((s) => s.addToast)
   const { user, loading: authLoading } = useAuth()
   const canManageMarkets = user?.role === 'SUPERADMIN' || user?.role === 'ADMIN'
 
@@ -36,15 +38,24 @@ function MarketCampaignsPage() {
       ])
       setMarket(m)
       setCampaigns(list || [])
-    } catch {
-      // toast handled
+    } catch (err) {
+      setMarket(null)
+      setCampaigns([])
+      addToast(err.message || 'Failed to load market campaigns', 'error')
     } finally {
       setLoading(false)
     }
-  }, [countryCode, operatorCode])
+  }, [countryCode, operatorCode, addToast])
 
   useEffect(() => {
-    load()
+    let active = true
+    const timer = setTimeout(() => {
+      if (active) load()
+    }, 0)
+    return () => {
+      active = false
+      clearTimeout(timer)
+    }
   }, [load])
 
   const filtered = useMemo(() => {
@@ -64,7 +75,7 @@ function MarketCampaignsPage() {
     </Button>
   ) : null
 
-  if (authLoading) {
+  if (authLoading || loading) {
     return (
       <AppShell>
         <div className="page-container flex items-center justify-center min-h-[50vh]">

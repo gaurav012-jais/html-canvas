@@ -85,7 +85,7 @@ export const createCampaignCrudService = (deps = {}) => {
     const campaign = await queryService.findOne(id, userId);
     validateActivation(campaign, dto, pageHasContent);
     applyDtoToCampaign(campaign, dto);
-    await syncCampaignTrackings(campaign.id, dto, getTrackingRepo());
+    await syncCampaignTrackings(campaign.id, dto, getTrackingRepo);
 
     delete campaign.trackings;
     await persistCampaign(campaign);

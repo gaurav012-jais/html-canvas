@@ -7,14 +7,12 @@ import {
 import {
   getCountryCodeFromDom,
   capturePhoneFromShadow,
-  setErrorText,
-  setStatusText,
   setSlotText,
   findContainer,
 } from './otp/otpDomHelpers'
 import { ensureStep2Footer, toggleOtpStep } from './otp/otpStepUi'
 import { createOtpCountdown } from './otp/otpCountdown'
-import { getResendAttempts, recordResendAttempt } from './otp/otpSession'
+import { getResendAttempts } from './otp/otpSession'
 import { createOtpSendHandler } from './otp/otpSendAction'
 import { createOtpVerifyHandler } from './otp/otpVerifyAction'
 
@@ -221,6 +219,8 @@ export function setupOtpBindings(
     visitIdRef,
     phoneRef,
     packRef,
+    setPhone,
+    pageCacheRef,
     setTransitioning,
     transitionLockRef,
     transitionFlow,
@@ -229,8 +229,54 @@ export function setupOtpBindings(
     updateSlot,
   })
 
+  const handleOtpInput = (e) => {
+    updateSlot(errorSlot, '')
+    let val = e.target.value.trim().replace(/\D/g, '')
+    const maxAttr = e.target.getAttribute('maxlength') || e.target.getAttribute('data-max-length')
+    const max =
+      maxAttr != null && maxAttr !== ''
+        ? parseInt(maxAttr, 10)
+        : Number(e.target.maxLength) > 0 && Number(e.target.maxLength) < 100000
+          ? Number(e.target.maxLength)
+          : NaN
+    if (Number.isFinite(max) && max > 0 && val.length > max) {
+      val = val.slice(0, max)
+    }
+    if (e.target.value !== val) {
+      e.target.value = val
+    }
+    if (Number.isFinite(max) && max > 0 && val.length === max) {
+      handleVerifyClick({ preventDefault: () => {} })
+    }
+  }
+
+  if (!shadow.querySelector('#otp-spinner-styles')) {
+    const styleEl = document.createElement('style')
+    styleEl.id = 'otp-spinner-styles'
+    styleEl.textContent = `
+      .otp-spinner {
+        display: inline-block;
+        width: 14px;
+        height: 14px;
+        border: 2px solid rgba(255,255,255,0.3);
+        border-radius: 50%;
+        border-top-color: currentColor;
+        animation: otpSpin 0.8s linear infinite;
+        vertical-align: middle;
+        margin-left: 6px;
+      }
+      @keyframes otpSpin {
+        to { transform: rotate(360deg); }
+      }
+    `
+    shadow.appendChild(styleEl)
+  }
+
   if (phoneInput) {
     phoneInput.addEventListener('input', handlePhoneInput)
+  }
+  if (otpInput) {
+    otpInput.addEventListener('input', handleOtpInput)
   }
   if (sendBtn) {
     sendBtn.addEventListener('click', handleSendClick)
@@ -242,6 +288,7 @@ export function setupOtpBindings(
   return () => {
     countdown.stop()
     if (phoneInput) phoneInput.removeEventListener('input', handlePhoneInput)
+    if (otpInput) otpInput.removeEventListener('input', handleOtpInput)
     if (sendBtn) sendBtn.removeEventListener('click', handleSendClick)
     if (verifyBtn) verifyBtn.removeEventListener('click', handleVerifyClick)
     if (changeNumberBtn) changeNumberBtn.removeEventListener('click', handleChangePhone)

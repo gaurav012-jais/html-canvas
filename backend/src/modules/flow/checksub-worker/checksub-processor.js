@@ -223,7 +223,9 @@ export const processRow = async (postback, { force = false } = {}) => {
               success: isSuccess,
             },
           );
-        } catch {}
+        } catch {
+          /* best-effort checksub analytics log */
+        }
       }
     } catch (visitErr) {
       console.warn(`${LOG_PREFIX} Failed to update visit for postback id=${id}:`, visitErr.message);

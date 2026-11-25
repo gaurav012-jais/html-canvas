@@ -1,6 +1,7 @@
 import { verifyOtp } from '../../../services/api/otp'
 import {
   formatMsisdnWithCountryCode,
+  persistPhone,
   resolvePhoneFromStorage,
 } from '../../../services/flow/resolvePhoneNumber'
 import { trackEvent } from '../../../utils/tracking'
@@ -20,6 +21,8 @@ export function createOtpVerifyHandler({
   visitIdRef,
   phoneRef,
   packRef,
+  setPhone,
+  pageCacheRef,
   setTransitioning,
   transitionLockRef,
   transitionFlow,
@@ -72,6 +75,9 @@ export function createOtpVerifyHandler({
       return
     }
 
+    const origVerifyHtml = verifyBtn ? verifyBtn.innerHTML : 'Verify & Continue'
+    const originalStatusText = statusSlot ? statusSlot.textContent : ''
+
     updateSlot(errorSlot, '')
     updateSlot(statusSlot, 'Verifying code...')
 
@@ -91,7 +97,13 @@ export function createOtpVerifyHandler({
       })
 
       trackEvent('otp_verified')
-      updateSlot(statusSlot, 'Verification successful! Loading...')
+      if (phoneRef) phoneRef.current = msisdn
+      if (setPhone) setPhone(msisdn)
+      persistPhone(msisdn)
+      pageCacheRef?.current?.delete('CONFIRM')
+      pageCacheRef?.current?.delete('THANKYOU')
+
+      updateSlot(statusSlot, 'Verified! Continuing...')
       setTransitioning(true)
       if (transitionLockRef) transitionLockRef.current = true
 
@@ -103,27 +115,39 @@ export function createOtpVerifyHandler({
           campid: campid || undefined,
           trackingCampid: trackingCampid || undefined,
           fromPage: 'OTP',
-          action: 'OTP_VERIFIED',
+          action: 'CONTINUE',
           phone: msisdn,
         })
 
-        if (next) cachePage(next)
-        if (loadPage && (!next || String(next.pageType).toUpperCase() === 'OTP')) {
-          await loadPage('THANKYOU', { direct: true })
+        if (next?.externalRedirect && /^https?:\/\//i.test(next.externalRedirect)) {
+          window.location.assign(next.externalRedirect)
+          return
         }
-      } catch {
-        if (loadPage) await loadPage('THANKYOU', { direct: true })
+        if (next) cachePage(next)
+        const nextType = String(next?.pageType || '').toUpperCase()
+        if (nextType === 'OTP' && loadPage) {
+          await loadPage('HOME', { direct: true })
+        }
+      } catch (err) {
+        updateSlot(errorSlot, err.message || 'Funnel transition failed', true)
+        if (statusSlot) statusSlot.textContent = originalStatusText
+        if (verifyBtn) {
+          verifyBtn.disabled = false
+          verifyBtn.style.opacity = '1'
+          verifyBtn.innerHTML = origVerifyHtml
+        }
       } finally {
         setTransitioning(false)
         if (transitionLockRef) transitionLockRef.current = false
       }
     } catch (err) {
-      updateSlot(statusSlot, '')
+      trackEvent('otp_failed')
+      if (statusSlot) statusSlot.textContent = originalStatusText
       updateSlot(errorSlot, err.message, true)
       if (verifyBtn) {
         verifyBtn.disabled = false
         verifyBtn.style.opacity = '1'
-        verifyBtn.textContent = 'Verify & Subscribe'
+        verifyBtn.innerHTML = origVerifyHtml
       }
     } finally {
       isVerifying = false

@@ -1,5 +1,5 @@
 export function ensureStep2Footer(isTwoStepOtp, changeNumberBtn, verifyBtn, onSend) {
-  let footer = null
+  let footer = changeNumberBtn?.closest?.('.otp-step2-actions') || null
   let btnChange = changeNumberBtn
 
   if (isTwoStepOtp && !btnChange && verifyBtn && verifyBtn.parentNode) {
@@ -32,6 +32,17 @@ export function ensureStep2Footer(isTwoStepOtp, changeNumberBtn, verifyBtn, onSe
         onSend(e)
       }
     })
+  } else if (footer) {
+    const existingResend = footer.querySelector('.otp-resend-link')
+    if (existingResend && !existingResend.dataset.boundResend) {
+      existingResend.dataset.boundResend = '1'
+      existingResend.addEventListener('click', (e) => {
+        e.preventDefault()
+        if (!existingResend.disabled) {
+          onSend(e)
+        }
+      })
+    }
   }
 
   return { step2Footer: footer, changeNumberBtn: btnChange }

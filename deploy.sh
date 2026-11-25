@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
 # AlmaLinux production deploy — ek script me sab:
-#   - Docker: Elasticsearch only (MySQL bahar hai)
-#   - PM2: NestJS backend + Vite frontend (static serve)
+#   - Docker: Elasticsearch + Redis (MySQL bahar hai)
+#   - PM2: Fastify backend + Vite frontend (static serve)
 #
 # Env files server pe pehle se rakho (script overwrite nahi karta):
 #   backend/.env
@@ -19,8 +19,8 @@
 #   API      → https://wap.wellnesss360.com/api  (VITE_API_BASE_URL=/api)
 #
 # Usage:
-#   ./deploy.sh              # full deploy (ES + build + PM2)
-#   ./deploy.sh elasticsearch # sirf Elasticsearch Docker
+#   ./deploy.sh              # full deploy (ES + Redis + build + PM2)
+#   ./deploy.sh elasticsearch # sirf Elasticsearch + Redis Docker
 #   ./deploy.sh apps          # sirf frontend/backend rebuild + PM2 restart
 #   ./deploy.sh status        # docker + pm2 status
 #   ./deploy.sh logs          # pm2 logs (api + web)
@@ -89,6 +89,15 @@ load_env() {
   BACKEND_PORT="${PORT:-${BACKEND_PORT:-3000}}"
   FRONTEND_PORT="${FRONTEND_PORT:-8080}"
   ELASTICSEARCH_NODE="${ELASTICSEARCH_NODE:-http://127.0.0.1:9200}"
+  REDIS_HOST="${REDIS_HOST:-127.0.0.1}"
+  REDIS_PORT="${REDIS_PORT:-6379}"
+
+  if [ "${NODE_ENV:-}" = "production" ] && [ -z "${CORS_ORIGIN:-}" ]; then
+    warn "backend/.env me CORS_ORIGIN empty hai — cross-origin browser requests block ho sakte hain"
+  fi
+  if [ "$REDIS_HOST" = "127.0.0.1" ] && [ "$REDIS_PORT" = "6379" ]; then
+    warn "REDIS_PORT=${REDIS_PORT} set hai; agar Docker Redis (docker-compose.yml) use kar rahe ho to port 6380 check karo"
+  fi
 
   # Same-origin /api is required for HTTPS (mixed-content safe).
   if [ -n "${VITE_API_BASE_URL:-}" ] && [[ "$VITE_API_BASE_URL" == http://* ]]; then
@@ -126,19 +135,27 @@ git_hard_reset_current_branch() {
 
 start_elasticsearch() {
   require_cmd docker
-  log "Elasticsearch Docker start kar raha hoon..."
-  docker_compose up -d elasticsearch
+  log "Elasticsearch + Redis Docker start kar raha hoon..."
+  docker_compose up -d elasticsearch redis
 
   log "Elasticsearch ready hone ka wait (max 90s)..."
   local i
   for i in $(seq 1 45); do
     if curl -fsS "${ELASTICSEARCH_NODE}/_cluster/health" >/dev/null 2>&1; then
       log "Elasticsearch ready hai"
-      return 0
+      break
     fi
     sleep 2
   done
-  warn "Elasticsearch abhi respond nahi kar raha — logs: docker logs templatecraft_elasticsearch"
+  if ! curl -fsS "${ELASTICSEARCH_NODE}/_cluster/health" >/dev/null 2>&1; then
+    warn "Elasticsearch abhi respond nahi kar raha — logs: docker logs templatecraft_elasticsearch"
+  fi
+
+  if docker exec templatecraft_redis redis-cli ping >/dev/null 2>&1; then
+    log "Redis ready hai"
+  else
+    warn "Redis abhi respond nahi kar raha — logs: docker logs templatecraft_redis"
+  fi
 }
 
 build_backend() {
@@ -198,8 +215,8 @@ start_pm2_apps() {
 
 show_status() {
   echo ""
-  log "=== Docker (Elasticsearch) ==="
-  docker ps --filter name=templatecraft_elasticsearch --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}' 2>/dev/null || warn "Docker nahi chal raha"
+  log "=== Docker (Elasticsearch + Redis) ==="
+  docker ps --filter name=templatecraft_ --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}' 2>/dev/null || warn "Docker nahi chal raha"
 
   echo ""
   log "=== PM2 ==="
@@ -210,8 +227,9 @@ show_status() {
   echo "  Frontend: $WEB_URL"
   echo "  Backend:  $API_URL"
   echo "  ES:       ${ELASTICSEARCH_NODE}"
+  echo "  Redis:    ${REDIS_HOST}:${REDIS_PORT}"
   echo ""
-  warn "Firewall me ports kholo: ${FRONTEND_PORT}, ${BACKEND_PORT} (aur 9200 sirf local rakho)"
+  warn "Firewall me ports kholo: ${FRONTEND_PORT}, ${BACKEND_PORT} (aur 9200, 6380 sirf local rakho)"
   warn "Reboot ke baad auto-start: sudo env PATH=\$PATH pm2 startup systemd -u \$USER --hp \$HOME && pm2 save"
 }
 
@@ -244,7 +262,7 @@ case "$cmd" in
   all|deploy)
     deploy_all
     ;;
-  elasticsearch|es|docker)
+  elasticsearch|es|docker|redis|infra)
     deploy_elasticsearch
     ;;
   apps|pm2|build)
@@ -262,7 +280,7 @@ case "$cmd" in
     log "PM2 apps band ho gaye"
     ;;
   *)
-    die "Unknown command: $cmd (use: all | elasticsearch | apps | status | logs | stop)"
+    die "Unknown command: $cmd (use: all | elasticsearch | redis | apps | status | logs | stop)"
     ;;
 esac
 

@@ -24,7 +24,9 @@ export const checkSub = async ({
         select: ['id', 'vendorId'],
       });
       if (v?.vendorId) resolvedVendorId = v.vendorId;
-    } catch {}
+    } catch {
+      /* best-effort visit lookup */
+    }
   }
 
   const apiConfig = await getApiConfig(campaignId);
@@ -89,7 +91,9 @@ export const unsubscribe = async ({
         select: ['id', 'vendorId'],
       });
       if (v?.vendorId) resolvedVendorId = v.vendorId;
-    } catch {}
+    } catch {
+      /* best-effort visit lookup */
+    }
   }
 
   const apiConfig = await getApiConfig(campaignId);

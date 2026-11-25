@@ -5,22 +5,24 @@ export class AddOtpRequests1760000000001 {
     const isPostgres = queryRunner.connection.options.type === 'postgres';
 
     if (isPostgres) {
-      await queryRunner.query(`
-        CREATE TABLE "otp_requests" (
-          "id" SERIAL PRIMARY KEY,
-          "phone" varchar NOT NULL,
-          "otp_hash" varchar NOT NULL,
-          "otp_salt" varchar NOT NULL,
-          "visit_id" varchar,
-          "attempts" integer NOT NULL DEFAULT 0,
-          "used_at" TIMESTAMP,
-          "expires_at" TIMESTAMP NOT NULL,
-          "created_at" TIMESTAMP NOT NULL DEFAULT now()
-        )
-      `);
-      await queryRunner.query(`
-        CREATE INDEX "IDX_OTP_PHONE_CREATED" ON "otp_requests" ("phone", "created_at")
-      `);
+      if (!(await queryRunner.hasTable('otp_requests'))) {
+        await queryRunner.query(`
+          CREATE TABLE IF NOT EXISTS "otp_requests" (
+            "id" SERIAL PRIMARY KEY,
+            "phone" varchar NOT NULL,
+            "otp_hash" varchar NOT NULL,
+            "otp_salt" varchar NOT NULL,
+            "visit_id" varchar,
+            "attempts" integer NOT NULL DEFAULT 0,
+            "used_at" TIMESTAMP,
+            "expires_at" TIMESTAMP NOT NULL,
+            "created_at" TIMESTAMP NOT NULL DEFAULT now()
+          )
+        `);
+        await queryRunner.query(`
+          CREATE INDEX IF NOT EXISTS "IDX_OTP_PHONE_CREATED" ON "otp_requests" ("phone", "created_at")
+        `);
+      }
     } else {
       await queryRunner.query(`
         CREATE TABLE IF NOT EXISTS \`otp_requests\` (

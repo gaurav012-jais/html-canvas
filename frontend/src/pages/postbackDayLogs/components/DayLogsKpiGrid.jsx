@@ -1,7 +1,7 @@
 import {
   CheckCircle2,
   Clock,
-  HardDrive,
+  FileText,
   Phone,
   Send,
   XCircle,
@@ -9,14 +9,20 @@ import {
 import Kpi from './Kpi'
 
 export default function DayLogsKpiGrid({
+  stats,
   summary,
-  file,
   applyView,
   applyFilter,
   applyHitFilter,
 }) {
   return (
-    <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-2">
+    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-9 gap-2">
+      <Kpi
+        label="Visits"
+        value={stats?.totals?.visits}
+        hint="Rolled-up daily stats"
+        icon={Clock}
+      />
       <button
         type="button"
         className="text-left"
@@ -25,21 +31,11 @@ export default function DayLogsKpiGrid({
           applyHitFilter('all')
         }}
       >
-        <Kpi label="Callback hits" value={summary?.totalHits} icon={Clock} />
-      </button>
-      <button
-        type="button"
-        className="text-left"
-        onClick={() => {
-          applyView('numbers')
-          applyFilter('all')
-        }}
-      >
         <Kpi
-          label="Unique numbers"
-          value={summary?.uniqueNumbers}
-          hint={file?.uniqueNumbers ? `day total: ${file.uniqueNumbers}` : null}
-          icon={HardDrive}
+          label="Hits"
+          value={summary?.hitCount ?? summary?.totalHits}
+          hint="Every callback + fire"
+          icon={FileText}
         />
       </button>
       <button
@@ -47,13 +43,12 @@ export default function DayLogsKpiGrid({
         className="text-left"
         onClick={() => {
           applyView('hits')
-          applyHitFilter('matched')
+          applyHitFilter('billing_callback')
         }}
       >
         <Kpi
-          label="Visit matched"
-          value={summary?.matched}
-          hint="found by click_id or rcid"
+          label="Callback hits"
+          value={summary?.billingHits}
           icon={CheckCircle2}
         />
       </button>
@@ -67,7 +62,7 @@ export default function DayLogsKpiGrid({
       >
         <Kpi
           label="Unmatched"
-          value={summary?.unmatched}
+          value={summary?.unmatched ?? summary?.callbackUnmatched}
           hint="click_id / msisdn not in system"
         />
       </button>

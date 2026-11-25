@@ -1,4 +1,6 @@
 import { memo } from 'react'
+import { getStyleProp, setStyleProp } from '../../utils/blockActions'
+import { toHex } from './propertyPanelUtils'
 
 export const inputClass =
   'w-full px-2.5 py-1.5 text-xs rounded-lg border border-slate-200 bg-white text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500/10 focus:border-indigo-500 transition-all duration-200'
@@ -30,7 +32,7 @@ export function matchFontOptionValue(cssValue) {
 }
 
 export function FontFamilyField({ selected, update }) {
-  const current = selected?.getStyle?.()['font-family'] || ''
+  const current = getStyleProp(selected, 'font-family') || ''
   const selectValue = matchFontOptionValue(current)
 
   return (
@@ -42,7 +44,7 @@ export function FontFamilyField({ selected, update }) {
         onChange={(e) => {
           const v = e.target.value
           if (v === '__custom__') return
-          selected.addStyle({ 'font-family': v || '' })
+          setStyleProp(selected, 'font-family', v || '')
           update()
         }}
       >
@@ -60,7 +62,7 @@ export function FontFamilyField({ selected, update }) {
 }
 
 export function TextSizeField({ selected, update }) {
-  const current = selected?.getStyle?.()['font-size'] || '16px'
+  const current = getStyleProp(selected, 'font-size') || '16px'
   const numeric = Number.parseInt(current, 10) || 16
   const sizes = [12, 14, 16, 20, 24, 30, 36, 48, 64]
   let idx = sizes.findIndex((s) => s >= numeric)
@@ -79,7 +81,7 @@ export function TextSizeField({ selected, update }) {
         value={idx}
         onChange={(e) => {
           const sz = sizes[Number.parseInt(e.target.value, 10)]
-          selected.addStyle({ 'font-size': `${sz}px` })
+          setStyleProp(selected, 'font-size', `${sz}px`)
           update()
         }}
         className="w-full accent-indigo-600"
@@ -89,7 +91,7 @@ export function TextSizeField({ selected, update }) {
 }
 
 export function FontWeightField({ selected, update }) {
-  const current = selected?.getStyle?.()['font-weight'] || '400'
+  const current = getStyleProp(selected, 'font-weight') || '400'
   const isBold = current === '700' || current === 'bold' || Number.parseInt(current, 10) >= 600
 
   return (
@@ -98,7 +100,7 @@ export function FontWeightField({ selected, update }) {
       <button
         type="button"
         onClick={() => {
-          selected.addStyle({ 'font-weight': isBold ? '400' : '700' })
+          setStyleProp(selected, 'font-weight', isBold ? '400' : '700')
           update()
         }}
         className={`px-3 py-1 rounded-lg text-xs font-bold border transition-colors ${
@@ -114,16 +116,16 @@ export function FontWeightField({ selected, update }) {
 }
 
 export function TextColorField({ selected, update, label = 'Text color', fallback = '#334155' }) {
-  const current = selected?.getStyle?.().color || fallback
+  const current = getStyleProp(selected, 'color') || fallback
   return (
     <div className="flex items-center justify-between">
       <span className="text-[11px] font-semibold text-slate-600">{label}</span>
       <div className="flex items-center gap-2">
         <input
           type="color"
-          value={current.startsWith('#') && current.length === 7 ? current : '#334155'}
+          value={toHex(current)}
           onChange={(e) => {
-            selected.addStyle({ color: e.target.value })
+            setStyleProp(selected, 'color', e.target.value)
             update()
           }}
           className="w-7 h-7 rounded-lg border border-slate-200 cursor-pointer p-0.5"
@@ -132,7 +134,7 @@ export function TextColorField({ selected, update, label = 'Text color', fallbac
           type="text"
           value={current}
           onChange={(e) => {
-            selected.addStyle({ color: e.target.value })
+            setStyleProp(selected, 'color', e.target.value)
             update()
           }}
           className="w-20 px-2 py-1 text-xs rounded-lg border border-slate-200 font-mono text-slate-700"
@@ -143,7 +145,7 @@ export function TextColorField({ selected, update, label = 'Text color', fallbac
 }
 
 export function TextAlignField({ selected, update }) {
-  const current = selected?.getStyle?.()['text-align'] || 'left'
+  const current = getStyleProp(selected, 'text-align') || 'left'
   const options = ['left', 'center', 'right']
 
   return (
@@ -155,7 +157,7 @@ export function TextAlignField({ selected, update }) {
             key={align}
             type="button"
             onClick={() => {
-              selected.addStyle({ 'text-align': align })
+              setStyleProp(selected, 'text-align', align)
               update()
             }}
             className={`px-2 py-0.5 rounded text-[11px] font-semibold capitalize transition-colors ${
@@ -176,6 +178,7 @@ export function TypographyControls({
   label = 'Typography',
   showAlign = true,
   textColorLabel = 'Text color',
+  colorFallback = '#334155',
 }) {
   return (
     <div className="space-y-3 pt-3 border-t border-slate-100">
@@ -183,7 +186,7 @@ export function TypographyControls({
       <FontFamilyField selected={selected} update={update} />
       <TextSizeField selected={selected} update={update} />
       <FontWeightField selected={selected} update={update} />
-      <TextColorField selected={selected} update={update} label={textColorLabel} />
+      <TextColorField selected={selected} update={update} label={textColorLabel} fallback={colorFallback} />
       {showAlign && <TextAlignField selected={selected} update={update} />}
     </div>
   )

@@ -37,7 +37,9 @@ export const verifyOtp = async ({
         select: ['id', 'vendorId'],
       });
       if (v?.vendorId) resolvedVendorId = v.vendorId;
-    } catch {}
+    } catch {
+      /* best-effort visit lookup */
+    }
   }
 
   const campaign = await getCampaign(campaignId);
@@ -50,13 +52,17 @@ export const verifyOtp = async ({
     try {
       const raw = await redisService.get(`orange_bf:${visitId}`);
       if (raw) cachedData = safeParseJson(raw);
-    } catch {}
+    } catch {
+      /* Redis cache optional */
+    }
   }
   if (!cachedData.transactionId && campaign?.id && msisdn) {
     try {
       const raw = await redisService.get(`orange_bf:${campaign.id}:${msisdn}`);
       if (raw) cachedData = safeParseJson(raw);
-    } catch {}
+    } catch {
+      /* Redis cache optional */
+    }
   }
 
   const context = {
@@ -114,7 +120,9 @@ export const verifyOtp = async ({
             error: verifyResult.responseMessage || 'OTP validation failed',
           },
         );
-      } catch {}
+      } catch {
+        /* best-effort OTP verify analytics log */
+      }
     }
     return {
       success: false,
@@ -187,7 +195,9 @@ export const verifyOtp = async ({
               subServiceId: config.syncSubServiceId || config.subServiceId,
             },
           );
-        } catch {}
+        } catch {
+          /* best-effort sync analytics log */
+        }
       }
     } catch (syncErr) {
       console.warn(
@@ -209,7 +219,9 @@ export const verifyOtp = async ({
           errorMessage: syncErr.message,
           statusLabel: 'ERROR',
         });
-      } catch {}
+      } catch {
+        /* best-effort API call error log */
+      }
     }
   }
 

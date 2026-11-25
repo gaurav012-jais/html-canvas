@@ -204,6 +204,8 @@ export function handleHeResolutionResult({
       setPhone(sessionPhone)
       persistPhone(sessionPhone)
       if (isHeRedirectUrl(successRedirectUrl)) {
+        heOnlyModeRef.current = true
+        setHeFunnelSuppressed(true)
         if (
           executeHeSuccessRedirect({
             destUrl: successRedirectUrl,
@@ -218,6 +220,8 @@ export function handleHeResolutionResult({
         ) {
           return
         }
+        heOnlyModeRef.current = false
+        setHeFunnelSuppressed(false)
       }
       heOnlyModeRef.current = false
       setHeFunnelSuppressed(false)

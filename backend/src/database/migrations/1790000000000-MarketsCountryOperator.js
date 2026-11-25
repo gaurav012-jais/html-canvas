@@ -1,13 +1,12 @@
+import {
+  dropIndexIfExists,
+  ensureColumn,
+  ensureConstraint,
+  ensureIndex,
+} from './migration-helpers.js';
+
 export class MarketsCountryOperator1790000000000 {
   name = 'MarketsCountryOperator1790000000000';
-
-  async safeQuery(queryRunner, sql) {
-    try {
-      await queryRunner.query(sql);
-    } catch {
-      // ignore
-    }
-  }
 
   deriveCountryCode(name) {
     const trimmed = String(name || '').trim();
@@ -45,9 +44,7 @@ export class MarketsCountryOperator1790000000000 {
     const isPostgres = queryRunner.connection.options.type === 'postgres';
 
     if (isPostgres) {
-      await this.safeQuery(
-        queryRunner,
-        `
+      await queryRunner.query(`
         CREATE TABLE IF NOT EXISTS "countries" (
           "id" SERIAL NOT NULL,
           "name" character varying NOT NULL,
@@ -58,12 +55,9 @@ export class MarketsCountryOperator1790000000000 {
           CONSTRAINT "PK_countries" PRIMARY KEY ("id"),
           CONSTRAINT "UQ_countries_user_code" UNIQUE ("user_id", "code")
         )
-      `,
-      );
+      `);
 
-      await this.safeQuery(
-        queryRunner,
-        `
+      await queryRunner.query(`
         CREATE TABLE IF NOT EXISTS "operators" (
           "id" SERIAL NOT NULL,
           "name" character varying NOT NULL,
@@ -76,18 +70,16 @@ export class MarketsCountryOperator1790000000000 {
           CONSTRAINT "UQ_operators_country_code" UNIQUE ("country_id", "code"),
           CONSTRAINT "FK_operators_country" FOREIGN KEY ("country_id") REFERENCES "countries"("id") ON DELETE CASCADE ON UPDATE CASCADE
         )
-      `,
-      );
+      `);
 
-      await this.safeQuery(
+      await ensureColumn(
         queryRunner,
+        'campaigns',
+        'operator_id',
         `ALTER TABLE "campaigns" ADD COLUMN IF NOT EXISTS "operator_id" integer`,
       );
 
-      await this.safeQuery(
-        queryRunner,
-        `DROP INDEX IF EXISTS "IDX_CAMPAIGNS_COUNTRY_OPERATOR"`,
-      );
+      await dropIndexIfExists(queryRunner, 'campaigns', 'IDX_CAMPAIGNS_COUNTRY_OPERATOR');
 
       const rows = await queryRunner.query(
         `SELECT "id", "country", "operator", "user_id" FROM "campaigns" WHERE "operator_id" IS NULL`,
@@ -144,14 +136,14 @@ export class MarketsCountryOperator1790000000000 {
         );
       }
 
-      await this.safeQuery(
+      await ensureConstraint(
         queryRunner,
+        'campaigns',
+        'FK_campaigns_operator',
         `ALTER TABLE "campaigns" ADD CONSTRAINT "FK_campaigns_operator" FOREIGN KEY ("operator_id") REFERENCES "operators"("id") ON DELETE SET NULL ON UPDATE CASCADE`,
       );
 
-      await this.safeQuery(
-        queryRunner,
-        `
+      await queryRunner.query(`
         UPDATE "campaigns" c
         SET "name" = c."name" || ' (' || c."id" || ')'
         WHERE c."operator_id" IS NOT NULL
@@ -161,17 +153,16 @@ export class MarketsCountryOperator1790000000000 {
               AND c2."name" = c."name"
               AND c2."id" < c."id"
           )
-      `,
-      );
+      `);
 
-      await this.safeQuery(
+      await ensureIndex(
         queryRunner,
+        'campaigns',
+        'IDX_campaigns_operator_name',
         `CREATE UNIQUE INDEX IF NOT EXISTS "IDX_campaigns_operator_name" ON "campaigns" ("operator_id", "name")`,
       );
     } else {
-      await this.safeQuery(
-        queryRunner,
-        `
+      await queryRunner.query(`
         CREATE TABLE IF NOT EXISTS \`countries\` (
           \`id\` int NOT NULL AUTO_INCREMENT,
           \`name\` varchar(255) NOT NULL,
@@ -182,12 +173,9 @@ export class MarketsCountryOperator1790000000000 {
           PRIMARY KEY (\`id\`),
           UNIQUE KEY \`UQ_countries_user_code\` (\`user_id\`, \`code\`)
         ) ENGINE=InnoDB
-      `,
-      );
+      `);
 
-      await this.safeQuery(
-        queryRunner,
-        `
+      await queryRunner.query(`
         CREATE TABLE IF NOT EXISTS \`operators\` (
           \`id\` int NOT NULL AUTO_INCREMENT,
           \`name\` varchar(255) NOT NULL,
@@ -200,23 +188,16 @@ export class MarketsCountryOperator1790000000000 {
           UNIQUE KEY \`UQ_operators_country_code\` (\`country_id\`, \`code\`),
           CONSTRAINT \`FK_operators_country\` FOREIGN KEY (\`country_id\`) REFERENCES \`countries\`(\`id\`) ON DELETE CASCADE ON UPDATE CASCADE
         ) ENGINE=InnoDB
-      `,
-      );
+      `);
 
-      const cols = await queryRunner.query(
-        `SHOW COLUMNS FROM \`campaigns\` LIKE 'operator_id'`,
-      );
-      if (!cols || cols.length === 0) {
-        await this.safeQuery(
-          queryRunner,
-          `ALTER TABLE \`campaigns\` ADD COLUMN \`operator_id\` int NULL`,
-        );
-      }
-
-      await this.safeQuery(
+      await ensureColumn(
         queryRunner,
-        `DROP INDEX \`IDX_CAMPAIGNS_COUNTRY_OPERATOR\` ON \`campaigns\``,
+        'campaigns',
+        'operator_id',
+        `ALTER TABLE \`campaigns\` ADD COLUMN \`operator_id\` int NULL`,
       );
+
+      await dropIndexIfExists(queryRunner, 'campaigns', 'IDX_CAMPAIGNS_COUNTRY_OPERATOR');
 
       const rows = await queryRunner.query(
         `SELECT \`id\`, \`country\`, \`operator\`, \`user_id\` FROM \`campaigns\` WHERE \`operator_id\` IS NULL`,
@@ -279,14 +260,14 @@ export class MarketsCountryOperator1790000000000 {
         );
       }
 
-      await this.safeQuery(
+      await ensureConstraint(
         queryRunner,
+        'campaigns',
+        'FK_campaigns_operator',
         `ALTER TABLE \`campaigns\` ADD CONSTRAINT \`FK_campaigns_operator\` FOREIGN KEY (\`operator_id\`) REFERENCES \`operators\`(\`id\`) ON DELETE SET NULL ON UPDATE CASCADE`,
       );
 
-      await this.safeQuery(
-        queryRunner,
-        `
+      await queryRunner.query(`
         UPDATE \`campaigns\` c
         JOIN \`campaigns\` c2
           ON c2.\`operator_id\` = c.\`operator_id\`
@@ -294,11 +275,12 @@ export class MarketsCountryOperator1790000000000 {
          AND c2.\`id\` < c.\`id\`
         SET c.\`name\` = CONCAT(c.\`name\`, ' (', c.\`id\`, ')')
         WHERE c.\`operator_id\` IS NOT NULL
-      `,
-      );
+      `);
 
-      await this.safeQuery(
+      await ensureIndex(
         queryRunner,
+        'campaigns',
+        'IDX_campaigns_operator_name',
         `CREATE UNIQUE INDEX \`IDX_campaigns_operator_name\` ON \`campaigns\` (\`operator_id\`, \`name\`)`,
       );
     }

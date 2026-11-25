@@ -59,11 +59,97 @@ img, video, iframe, embed, object {
     max-width: 100% !important;
     font-size: 16px !important; /* Prevents iOS auto-zoom on focus */
   }
+  /* Hamburger button — show on mobile */
+  .tc-nav-hamburger {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    cursor: pointer !important;
+    font-size: 24px !important;
+    user-select: none !important;
+    color: #0f172a !important;
+    padding: 4px !important;
+    z-index: 100 !important;
+  }
+  /* Header: flex-wrap so logo + hamburger sit on one row */
+  header, [data-tc-type="section"] > header {
+    position: relative !important;
+    display: flex !important;
+    flex-wrap: wrap !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    padding: 12px 16px !important;
+    gap: 0 !important;
+  }
+  /* Desktop nav — hidden until hamburger toggled.
+     Use maximum specificity to override GrapesJS inline style="display:flex" */
+  header nav,
+  header > nav,
+  header nav[style],
+  header > nav[style] {
+    display: none !important;
+    flex-direction: column !important;
+    width: 100% !important;
+    order: 3 !important;
+    background: #ffffff !important;
+    padding: 12px 16px !important;
+    border-top: 1px solid #e2e8f0 !important;
+    gap: 8px !important;
+    align-items: stretch !important;
+  }
+  header nav a,
+  header > nav a {
+    width: 100% !important;
+    text-align: center !important;
+    padding: 10px 16px !important;
+    display: block !important;
+    white-space: normal !important;
+    word-break: break-word !important;
+  }
+  /* CSS-checkbox hamburger toggle — works with any unique id via class */
+  .tc-nav-toggle:checked ~ nav,
+  .tc-nav-toggle:checked ~ nav[style] {
+    display: flex !important;
+  }
   /* Stacking: flex rows wrap cleanly on small screens */
   .flex:not(.no-wrap):not([class*="flex-nowrap"]),
   [style*="display: flex"]:not([style*="flex-wrap: nowrap"]),
   [style*="display:flex"]:not([style*="flex-wrap:nowrap"]) {
     flex-wrap: wrap !important;
+  }
+  /* Flex rows -> vertical stacks on mobile */
+  section > div[style*="display:flex"],
+  section > div[style*="display: flex"],
+  header + section > div[style*="flex"] {
+    flex-direction: column !important;
+    align-items: stretch !important;
+  }
+  /* Flex children: take full width */
+  section > div > div[style*="flex:1"],
+  section > div > div[style*="flex: 1"] {
+    min-width: 0 !important;
+    width: 100% !important;
+  }
+  /* Hero columns: stack image below text */
+  section[style*="display:flex"],
+  section[style*="display: flex"] {
+    flex-direction: column !important;
+    gap: 24px !important;
+  }
+  /* Pricing cards: full width */
+  section div[style*="min-width:260px"],
+  section div[style*="min-width: 260px"],
+  section div[style*="min-width:240px"],
+  section div[style*="min-width: 240px"] {
+    min-width: 0 !important;
+    width: 100% !important;
+    max-width: 100% !important;
+  }
+  /* Sections — comfortable mobile padding, prevent side overflow */
+  [data-tc-type="section"],
+  section, footer {
+    padding: 32px 16px !important;
+    width: 100% !important;
   }
   /* Reduce padding on hero and heavy sections */
   section, .section, [data-gjs-type="wrapper"] > div {
@@ -74,6 +160,30 @@ img, video, iframe, embed, object {
   .desktop-only, [data-tc-device="desktop"] {
     display: none !important;
   }
+  /* CTA buttons: flex-center + no overflow (skip absolute image overlays) */
+  a[data-tc-type="button"]:not([data-tc-absolute="1"]),
+  a[style*="padding:14px"]:not([data-tc-absolute="1"]),
+  a[style*="padding: 14px"]:not([data-tc-absolute="1"]),
+  button.flow-btn:not([data-tc-absolute="1"]),
+  .flow-btn:not([data-tc-absolute="1"]) {
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    max-width: 100% !important;
+    text-align: center !important;
+    box-sizing: border-box !important;
+    white-space: normal !important;
+    word-break: break-word !important;
+    line-height: 1.25 !important;
+  }
+  /* Grid columns: single column on mobile */
+  div[style*="grid-template-columns:repeat(auto-fit"],
+  div[style*="grid-template-columns: repeat(auto-fit"] {
+    grid-template-columns: 1fr !important;
+  }
+  /* Typography scale down */
+  h1 { font-size: clamp(24px, 8vw, 32px) !important; }
+  h2 { font-size: clamp(20px, 6vw, 26px) !important; }
   /* Mobile-first card & banner components */
   [data-tc-type="image-banner"] {
     width: 100% !important;
@@ -105,6 +215,12 @@ img, video, iframe, embed, object {
     max-width: 720px !important;
     padding-left: 24px !important;
     padding-right: 24px !important;
+  }
+  header, [data-tc-type="section"] > header {
+    padding: 16px 20px !important;
+  }
+  header nav {
+    gap: 16px !important;
   }
   /* 3+ col grids drop to 2 col on tablet */
   [class*="grid-cols-3"], [class*="grid-cols-4"], [class*="grid-cols-5"], [class*="grid-cols-6"] {

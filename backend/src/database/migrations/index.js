@@ -27,6 +27,7 @@ import { AddCampaignCapping1980000000000 } from './1980000000000-AddCampaignCapp
 import { AddDelayedChecksubColumns1990000000000 } from './1990000000000-AddDelayedChecksubColumns.js';
 import { AddVendorCapping1990000000001 } from './1990000000001-AddVendorCapping.js';
 import { AddVisitsChecksubColumns1990000000002 } from './1990000000002-AddVisitsChecksubColumns.js';
+import { EnsureVisitEventTypeIndex1990000000003 } from './1990000000003-EnsureVisitEventTypeIndex.js';
 
 export const migrations = [
   InitialSchema1730000000000,
@@ -58,4 +59,5 @@ export const migrations = [
   AddDelayedChecksubColumns1990000000000,
   AddVendorCapping1990000000001,
   AddVisitsChecksubColumns1990000000002,
+  EnsureVisitEventTypeIndex1990000000003,
 ];

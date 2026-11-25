@@ -48,7 +48,13 @@ export function useLogsQuery() {
 
   // Derive campaign flow specs for filters
   const selectedCampaignPre = useMemo(() => {
-    return campaigns.find((item) => String(item.id) === String(sessionStorage.getItem('tc_campaign_logs_filter_state') ? JSON.parse(sessionStorage.getItem('tc_campaign_logs_filter_state'))?.selectedId : '')) || null
+    try {
+      const raw = sessionStorage.getItem('tc_campaign_logs_filter_state')
+      const cachedId = raw ? JSON.parse(raw)?.selectedId : ''
+      return campaigns.find((item) => String(item.id) === String(cachedId)) || null
+    } catch {
+      return null
+    }
   }, [campaigns])
 
   const flowTypePre = useMemo(() => {

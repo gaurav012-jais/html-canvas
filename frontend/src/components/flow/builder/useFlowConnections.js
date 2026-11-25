@@ -21,7 +21,8 @@ export function useFlowConnections({
   const [newConnCondition, setNewConnCondition] = useState('DEFAULT')
 
   const onConnect = useCallback(
-    createOnConnectHandler({ nodes, setEdges, mode, addToast }),
+    (connection) =>
+      createOnConnectHandler({ nodes, setEdges, mode, addToast })(connection),
     [setEdges, nodes, mode, addToast],
   )
 
@@ -65,19 +66,21 @@ export function useFlowConnections({
   }, [newConnSourcePageType, mode])
 
   const addConnection = useCallback(
-    createAddConnectionHandler({
-      nodes,
-      edges,
-      setEdges,
-      newConnSource,
-      newConnTarget,
-      newConnCondition,
-      newConnSourcePageType,
-      mode,
-      addToast,
-      isLocked,
-    }),
+    () =>
+      createAddConnectionHandler({
+        nodes,
+        edges,
+        setEdges,
+        newConnSource,
+        newConnTarget,
+        newConnCondition,
+        newConnSourcePageType,
+        mode,
+        addToast,
+        isLocked,
+      })(),
     [
+      nodes,
       newConnSource,
       newConnTarget,
       newConnCondition,
@@ -91,7 +94,8 @@ export function useFlowConnections({
   )
 
   const onNodesDelete = useCallback(
-    createOnNodesDeleteHandler({ setEdges, setSelectedNodeId, addToast }),
+    (deleted) =>
+      createOnNodesDeleteHandler({ setEdges, setSelectedNodeId, addToast })(deleted),
     [setEdges, setSelectedNodeId, addToast],
   )
 

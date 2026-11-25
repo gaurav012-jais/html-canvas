@@ -1,19 +1,10 @@
+import { ensureColumn, ensureIndex } from './migration-helpers.js';
+
 export class AddPartnersFlowAndAttribution1770000000000 {
   name = 'AddPartnersFlowAndAttribution1770000000000';
 
   async addColumnIfMissing(queryRunner, table, column, ddl) {
-    const has = await queryRunner.hasColumn(table, column);
-    if (!has) {
-      await queryRunner.query(ddl);
-    }
-  }
-
-  async safeQuery(queryRunner, sql) {
-    try {
-      await queryRunner.query(sql);
-    } catch {
-      // ignore (e.g. index already exists)
-    }
+    await ensureColumn(queryRunner, table, column, ddl);
   }
 
   async up(queryRunner) {
@@ -22,7 +13,7 @@ export class AddPartnersFlowAndAttribution1770000000000 {
     if (isPostgres) {
       if (!(await queryRunner.hasTable('vendors'))) {
         await queryRunner.query(`
-          CREATE TABLE "vendors" (
+          CREATE TABLE IF NOT EXISTS "vendors" (
             "id" SERIAL PRIMARY KEY,
             "name" varchar NOT NULL,
             "code" varchar NOT NULL,
@@ -32,15 +23,17 @@ export class AddPartnersFlowAndAttribution1770000000000 {
             "updated_at" TIMESTAMP NOT NULL DEFAULT now()
           )
         `);
-        await this.safeQuery(
+        await ensureIndex(
           queryRunner,
-          `CREATE UNIQUE INDEX "IDX_vendors_user_code" ON "vendors" ("user_id", "code")`,
+          'vendors',
+          'IDX_vendors_user_code',
+          `CREATE UNIQUE INDEX IF NOT EXISTS "IDX_vendors_user_code" ON "vendors" ("user_id", "code")`,
         );
       }
 
       if (!(await queryRunner.hasTable('affiliates'))) {
         await queryRunner.query(`
-          CREATE TABLE "affiliates" (
+          CREATE TABLE IF NOT EXISTS "affiliates" (
             "id" SERIAL PRIMARY KEY,
             "vendor_id" integer NOT NULL,
             "name" varchar NOT NULL,
@@ -52,79 +45,89 @@ export class AddPartnersFlowAndAttribution1770000000000 {
             CONSTRAINT "FK_affiliates_vendor" FOREIGN KEY ("vendor_id") REFERENCES "vendors"("id") ON DELETE CASCADE
           )
         `);
-        await this.safeQuery(
+        await ensureIndex(
           queryRunner,
-          `CREATE UNIQUE INDEX "IDX_affiliates_user_code" ON "affiliates" ("user_id", "code")`,
+          'affiliates',
+          'IDX_affiliates_user_code',
+          `CREATE UNIQUE INDEX IF NOT EXISTS "IDX_affiliates_user_code" ON "affiliates" ("user_id", "code")`,
         );
-        await this.safeQuery(
+        await ensureIndex(
           queryRunner,
-          `CREATE INDEX "IDX_affiliates_vendor" ON "affiliates" ("vendor_id")`,
+          'affiliates',
+          'IDX_affiliates_vendor',
+          `CREATE INDEX IF NOT EXISTS "IDX_affiliates_vendor" ON "affiliates" ("vendor_id")`,
         );
       }
 
-      await this.addColumnIfMissing(
+      await ensureColumn(
         queryRunner,
         'campaigns',
         'vendor_id',
         `ALTER TABLE "campaigns" ADD COLUMN "vendor_id" integer`,
       );
-      await this.addColumnIfMissing(
+      await ensureColumn(
         queryRunner,
         'campaigns',
         'verification_mode',
         `ALTER TABLE "campaigns" ADD COLUMN "verification_mode" varchar(16)`,
       );
-      await this.addColumnIfMissing(
+      await ensureColumn(
         queryRunner,
         'campaigns',
         'flow_config',
         `ALTER TABLE "campaigns" ADD COLUMN "flow_config" text`,
       );
 
-      await this.addColumnIfMissing(
+      await ensureColumn(
         queryRunner,
         'visits',
         'vendor_id',
         `ALTER TABLE "visits" ADD COLUMN "vendor_id" integer`,
       );
-      await this.addColumnIfMissing(
+      await ensureColumn(
         queryRunner,
         'visits',
         'affiliate_id',
         `ALTER TABLE "visits" ADD COLUMN "affiliate_id" integer`,
       );
-      await this.addColumnIfMissing(
+      await ensureColumn(
         queryRunner,
         'visits',
         'click_id',
         `ALTER TABLE "visits" ADD COLUMN "click_id" varchar`,
       );
-      await this.addColumnIfMissing(
+      await ensureColumn(
         queryRunner,
         'visits',
         'vid_raw',
         `ALTER TABLE "visits" ADD COLUMN "vid_raw" varchar`,
       );
-      await this.addColumnIfMissing(
+      await ensureColumn(
         queryRunner,
         'visits',
         'aff_raw',
         `ALTER TABLE "visits" ADD COLUMN "aff_raw" varchar`,
       );
-      await this.safeQuery(
+      await ensureIndex(
         queryRunner,
-        `CREATE INDEX "IDX_visits_vendor" ON "visits" ("vendor_id")`,
+        'visits',
+        'IDX_visits_vendor',
+        `CREATE INDEX IF NOT EXISTS "IDX_visits_vendor" ON "visits" ("vendor_id")`,
       );
-      await this.safeQuery(
+      await ensureIndex(
         queryRunner,
-        `CREATE INDEX "IDX_visits_affiliate" ON "visits" ("affiliate_id")`,
+        'visits',
+        'IDX_visits_affiliate',
+        `CREATE INDEX IF NOT EXISTS "IDX_visits_affiliate" ON "visits" ("affiliate_id")`,
       );
-      await this.safeQuery(
+      await ensureIndex(
         queryRunner,
-        `CREATE INDEX "IDX_visits_click" ON "visits" ("click_id")`,
+        'visits',
+        'IDX_visits_click',
+        `CREATE INDEX IF NOT EXISTS "IDX_visits_click" ON "visits" ("click_id")`,
       );
 
-      await this.addColumnIfMissing(
+      await ensureColumn(
         queryRunner,
         'api_configs',
         'resolve_msisdn_url',
@@ -215,16 +218,22 @@ export class AddPartnersFlowAndAttribution1770000000000 {
         'aff_raw',
         `ALTER TABLE \`visits\` ADD COLUMN \`aff_raw\` varchar(255) NULL`,
       );
-      await this.safeQuery(
+      await ensureIndex(
         queryRunner,
+        'visits',
+        'IDX_visits_vendor',
         `CREATE INDEX \`IDX_visits_vendor\` ON \`visits\` (\`vendor_id\`)`,
       );
-      await this.safeQuery(
+      await ensureIndex(
         queryRunner,
+        'visits',
+        'IDX_visits_affiliate',
         `CREATE INDEX \`IDX_visits_affiliate\` ON \`visits\` (\`affiliate_id\`)`,
       );
-      await this.safeQuery(
+      await ensureIndex(
         queryRunner,
+        'visits',
+        'IDX_visits_click',
         `CREATE INDEX \`IDX_visits_click\` ON \`visits\` (\`click_id\`)`,
       );
 

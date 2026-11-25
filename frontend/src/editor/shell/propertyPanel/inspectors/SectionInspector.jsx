@@ -153,7 +153,114 @@ export function SectionInspector({
           update()
         }}
       />
+      <div className="flex gap-2">
+        <Field label="Width">
+          <input
+            className={inputClass}
+            placeholder="e.g. 100% or 400px"
+            value={getStyleProp(selected, 'width') || ''}
+            onChange={(e) => {
+              setStyleProp(selected, 'width', e.target.value)
+              update()
+            }}
+          />
+        </Field>
+        <Field label="Min height">
+          <input
+            className={inputClass}
+            placeholder="e.g. 400px"
+            value={getStyleProp(selected, 'min-height') || getStyleProp(selected, 'height') || ''}
+            onChange={(e) => {
+              const val = e.target.value.trim()
+              const next = { ...selected.getStyle() }
+              if (val) {
+                next['min-height'] = val
+                delete next.height
+              } else {
+                delete next['min-height']
+              }
+              selected.setStyle(next)
+              update()
+            }}
+          />
+        </Field>
+      </div>
+      <p className="text-[11px] text-slate-400 -mt-1 leading-relaxed">
+        Drag the blue corner/edge handles on the canvas, or type a min height here to make the block taller.
+      </p>
       <PositionControls selected={selected} update={update} />
+      <Field label="Layout">
+        <select
+          className={inputClass}
+          value={getStyleProp(selected, 'display') || 'block'}
+          onChange={(e) => {
+            setStyleProp(selected, 'display', e.target.value)
+            update()
+          }}
+        >
+          <option value="block">Block</option>
+          <option value="flex">Flex</option>
+          <option value="grid">Grid</option>
+        </select>
+      </Field>
+      {getStyleProp(selected, 'display') === 'flex' && (
+        <>
+          <Field label="Flex direction">
+            <select
+              className={inputClass}
+              value={getStyleProp(selected, 'flex-direction') || 'row'}
+              onChange={(e) => {
+                setStyleProp(selected, 'flex-direction', e.target.value)
+                update()
+              }}
+            >
+              <option value="row">Row</option>
+              <option value="column">Column</option>
+            </select>
+          </Field>
+          <Field label="Gap">
+            <input
+              className={inputClass}
+              placeholder="e.g. 16px, 24px"
+              value={getStyleProp(selected, 'gap') || ''}
+              onChange={(e) => {
+                setStyleProp(selected, 'gap', e.target.value)
+                update()
+              }}
+            />
+          </Field>
+          <Field label="Align items">
+            <select
+              className={inputClass}
+              value={getStyleProp(selected, 'align-items') || 'stretch'}
+              onChange={(e) => {
+                setStyleProp(selected, 'align-items', e.target.value)
+                update()
+              }}
+            >
+              <option value="stretch">Stretch</option>
+              <option value="flex-start">Start</option>
+              <option value="center">Center</option>
+              <option value="flex-end">End</option>
+            </select>
+          </Field>
+          <Field label="Justify content">
+            <select
+              className={inputClass}
+              value={getStyleProp(selected, 'justify-content') || 'flex-start'}
+              onChange={(e) => {
+                setStyleProp(selected, 'justify-content', e.target.value)
+                update()
+              }}
+            >
+              <option value="flex-start">Start</option>
+              <option value="center">Center</option>
+              <option value="flex-end">End</option>
+              <option value="space-between">Space between</option>
+            </select>
+          </Field>
+        </>
+      )}
     </>
   )
 }

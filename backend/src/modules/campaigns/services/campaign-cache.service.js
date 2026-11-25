@@ -34,8 +34,6 @@ export const invalidateFlowCampaignCache = async (campaignOrPartial) => {
 
   if (!id || Number.isNaN(id)) return;
 
-  const campaignRepo = getRepository(Campaign);
-
   if (
     isIdOnly ||
     !campaign?.country ||
@@ -43,6 +41,7 @@ export const invalidateFlowCampaignCache = async (campaignOrPartial) => {
     !campaign?.trackingId
   ) {
     try {
+      const campaignRepo = getRepository(Campaign);
       const found = await campaignRepo.findOne({
         where: { id },
         relations: {

@@ -9,6 +9,12 @@
  * Also adds index IDX_postbacks_delayed_checksub_status_scheduled on
  * (delayed_checksub_status, delayed_checksub_scheduled_at) for cron worker query performance.
  */
+import {
+  dropIndexIfExists,
+  ensureDropColumn,
+  ensureIndex,
+} from './migration-helpers.js';
+
 export class AddDelayedChecksubColumns1990000000000 {
   name = 'AddDelayedChecksubColumns1990000000000';
 
@@ -121,7 +127,10 @@ export class AddDelayedChecksubColumns1990000000000 {
           `ALTER TABLE \`conversion_postbacks\` ADD COLUMN \`delayed_checksub_response\` text NULL`,
         );
       }
-      await queryRunner.query(
+      await ensureIndex(
+        queryRunner,
+        'conversion_postbacks',
+        'IDX_postbacks_delayed_checksub_status_scheduled',
         `CREATE INDEX \`IDX_postbacks_delayed_checksub_status_scheduled\`
          ON \`conversion_postbacks\` (\`delayed_checksub_status\`, \`delayed_checksub_scheduled_at\`)`,
       );
@@ -129,7 +138,6 @@ export class AddDelayedChecksubColumns1990000000000 {
   }
 
   async down(queryRunner) {
-    const isPostgres = queryRunner.connection.options.type === 'postgres';
     const cols = [
       'delayed_checksub_status',
       'delayed_checksub_scheduled_at',
@@ -138,24 +146,13 @@ export class AddDelayedChecksubColumns1990000000000 {
       'delayed_checksub_response',
     ];
 
-    if (isPostgres) {
-      await queryRunner.query(
-        `DROP INDEX IF EXISTS "IDX_postbacks_delayed_checksub_status_scheduled"`,
-      );
-      for (const col of cols) {
-        await queryRunner.query(
-          `ALTER TABLE "conversion_postbacks" DROP COLUMN IF EXISTS "${col}"`,
-        );
-      }
-    } else {
-      await queryRunner.query(
-        `DROP INDEX \`IDX_postbacks_delayed_checksub_status_scheduled\` ON \`conversion_postbacks\``,
-      );
-      for (const col of cols) {
-        await queryRunner.query(
-          `ALTER TABLE \`conversion_postbacks\` DROP COLUMN \`${col}\``,
-        );
-      }
+    await dropIndexIfExists(
+      queryRunner,
+      'conversion_postbacks',
+      'IDX_postbacks_delayed_checksub_status_scheduled',
+    );
+    for (const col of cols) {
+      await ensureDropColumn(queryRunner, 'conversion_postbacks', col);
     }
   }
 }

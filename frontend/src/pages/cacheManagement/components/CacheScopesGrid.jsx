@@ -3,12 +3,13 @@ import { Trash2 } from 'lucide-react'
 import Button from '../../../components/ui/Button'
 import { PRESET_SCOPES } from '../cacheConstants'
 
-function CacheScopesGrid({ onPurgeScope, purgingScope }) {
+function CacheScopesGrid({ stats, onPurgeScope, purgingScope }) {
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
       {PRESET_SCOPES.map((scope) => {
         const Icon = scope.icon
         const isPurging = purgingScope === scope.id
+        const scopeCount = stats?.groups?.[scope.id]
 
         return (
           <div
@@ -29,7 +30,7 @@ function CacheScopesGrid({ onPurgeScope, purgingScope }) {
                   </div>
                 </div>
                 <span className={`badge ${scope.badge} text-[10px]`}>
-                  Scoped
+                  {scopeCount != null ? `${scopeCount} keys` : 'Scoped'}
                 </span>
               </div>
               <p className="text-xs text-fg-muted leading-relaxed">

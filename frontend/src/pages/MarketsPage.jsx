@@ -8,10 +8,12 @@ import Input from '../components/ui/Input'
 import EmptyState from '../components/ui/EmptyState'
 import { CreateMarketModal, EditMarketModal } from './markets/MarketModals'
 import * as marketsApi from '../services/api/markets'
+import useStore from '../store/useStore'
 
 function MarketsPage() {
   const navigate = useNavigate()
-  const { user, isAuthenticated, loading: authLoading } = useAuth()
+  const addToast = useStore((s) => s.addToast)
+  const { user, loading: authLoading } = useAuth()
   const canManageMarkets = user?.role === 'SUPERADMIN' || user?.role === 'ADMIN'
 
   const [markets, setMarkets] = useState([])
@@ -25,15 +27,22 @@ function MarketsPage() {
       setLoading(true)
       const data = await marketsApi.listMarkets()
       setMarkets(data || [])
-    } catch {
-      // toast shown by service/interceptor
+    } catch (err) {
+      addToast(err.message || 'Failed to load markets', 'error')
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [addToast])
 
   useEffect(() => {
-    loadMarkets()
+    let active = true
+    const timer = setTimeout(() => {
+      if (active) loadMarkets()
+    }, 0)
+    return () => {
+      active = false
+      clearTimeout(timer)
+    }
   }, [loadMarkets])
 
   const filtered = useMemo(() => {

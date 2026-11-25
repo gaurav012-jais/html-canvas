@@ -119,7 +119,9 @@ export const getCampaignVendorStats = async (campaignId, userId, options = {}) =
     if (typeof meta === 'string') {
       try {
         meta = JSON.parse(meta);
-      } catch {}
+      } catch {
+        /* ignore malformed metadata JSON */
+      }
     }
     const eventType = r.eventType ?? r.event_event_type ?? r.event_type;
     const reason = normalizeFailureReason(meta, eventType);

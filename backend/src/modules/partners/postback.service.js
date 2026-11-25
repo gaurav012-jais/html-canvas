@@ -28,7 +28,16 @@ export const createPostbackService = () => {
   const getApiCallLogRepo = () => getRepository(ApiCallLog);
 
   const repoDeps = { getPostbackRepo, getVendorRepo, getVisitRepo, getCampaignRepo, getTrackingRepo };
-  const registerDeps = { ...repoDeps, firePostback: null };
+  let firePostback = null;
+  const registerDeps = {
+    ...repoDeps,
+    firePostback: (...args) => {
+      if (typeof firePostback !== 'function') {
+        throw new Error('firePostback has not been initialized');
+      }
+      return firePostback(...args);
+    },
+  };
 
   const {
     resolvePostbackTemplate,
@@ -37,11 +46,11 @@ export const createPostbackService = () => {
     registerPending,
   } = createPostbackRegister(registerDeps);
 
-  const { firePostback } = createPostbackForward({
+  ({ firePostback } = createPostbackForward({
     ...repoDeps,
     indexPostbackEvent,
     logApiCall,
-  });
+  }));
   registerDeps.firePostback = firePostback;
 
   const { processOperatorCallback } = createPostbackCallback({

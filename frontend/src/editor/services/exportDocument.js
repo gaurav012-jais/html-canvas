@@ -128,18 +128,21 @@ export function renderPageDocument(
   const editorStylesheets = getActiveStylesheetsContent()
   const customCss = minifyCss(css || '')
 
-  const previewScript = isPreview
+  const previewNavSnippet = isPreview
     ? `
-<script>
-  document.addEventListener('click', function(e) {
-    var a = e.target.closest('a');
-    if (!a) return;
     var targetPage = a.getAttribute('data-target-page');
     if (targetPage) {
       e.preventDefault();
       window.parent.postMessage({ type: 'TC_NAVIGATE_PAGE', page: targetPage }, '*');
       return;
-    }
+    }`
+    : ''
+
+  const previewScript = `
+<script>
+  document.addEventListener('click', function(e) {
+    var a = e.target.closest('a');
+    if (!a) return;${previewNavSnippet}
     var href = (a.getAttribute('href') || '').trim();
     if (href.startsWith('#') && href.length > 1) {
       var id = decodeURIComponent(href.slice(1));
@@ -151,10 +154,9 @@ export function renderPageDocument(
     }
   }, true);
 </script>`
-    : ''
 
   const fontLinks = FLOW_RUNTIME_STYLESHEET_HREFS.map(
-    (href) => `<link rel="stylesheet" href="${href}">`,
+    (href) => `<link rel="stylesheet" href="${href}" crossorigin="anonymous">`,
   ).join('\n  ')
 
   return `<!DOCTYPE html>
@@ -164,6 +166,16 @@ export function renderPageDocument(
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>${escapeHtml(title)}</title>
   ${fontLinks}
+  <script>
+    tailwind = {
+      config: {
+        corePlugins: {
+          preflight: false,
+        }
+      }
+    };
+  </script>
+  <script src="https://cdn.tailwindcss.com"></script>
   <style>
 /* ── Flow runtime CSS ── */
 ${FLOW_RUNTIME_CSS}

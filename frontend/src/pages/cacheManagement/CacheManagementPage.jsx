@@ -42,7 +42,7 @@ function CacheManagementPage() {
             size="sm"
             onClick={() => {
               fetchStats()
-              fetchKeys()
+              fetchKeys(scanPattern)
             }}
             disabled={loadingStats || loadingKeys}
             className="gap-1.5"
@@ -52,7 +52,7 @@ function CacheManagementPage() {
             />
             Refresh Telemetry
           </Button>
-          <Link to="/admin/users">
+          <Link to="/users">
             <Button variant="ghost" size="sm" className="gap-1.5">
               <UserCog className="w-4 h-4" />
               Manage Users
@@ -77,6 +77,7 @@ function CacheManagementPage() {
             <span className="text-xs text-fg-subtle">Targeted key pattern invalidations</span>
           </div>
           <CacheScopesGrid
+            stats={stats}
             onPurgeScope={handleOpenPurgeScope}
             purgingScope={purgingScope}
           />

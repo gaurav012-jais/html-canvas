@@ -35,7 +35,9 @@ export const startOrCheckSub = async ({
         select: ['id', 'vendorId'],
       });
       if (v?.vendorId) resolvedVendorId = v.vendorId;
-    } catch {}
+    } catch {
+      /* best-effort visit lookup */
+    }
   }
 
   const campaign = await getCampaign(campaignId);
@@ -169,7 +171,9 @@ export const startOrCheckSub = async ({
             error: otpResult.responseMessage || 'Failed to send OTP',
           },
         );
-      } catch {}
+      } catch {
+        /* best-effort OTP send analytics log */
+      }
     }
     return {
       success: false,
@@ -232,7 +236,9 @@ export const startOrCheckSub = async ({
           transactionId: chainedId,
         },
       );
-    } catch {}
+    } catch {
+      /* best-effort OTP send analytics log */
+    }
   }
   if (campaign?.id && msisdn) {
     try {

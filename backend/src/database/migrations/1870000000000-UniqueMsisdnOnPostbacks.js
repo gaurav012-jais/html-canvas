@@ -2,18 +2,10 @@
  * conversion_postbacks: one row per msisdn (SAFWAP callback_manage parity).
  * Dedupe keeping latest id, then UNIQUE(msisdn).
  */
+import { dropIndexIfExists, ensureIndex } from './migration-helpers.js';
+
 export class UniqueMsisdnOnPostbacks1870000000000 {
   name = 'UniqueMsisdnOnPostbacks1870000000000';
-
-  async safeQuery(queryRunner, sql) {
-    try {
-      await queryRunner.query(sql);
-    } catch (err) {
-      if (!/already exists|duplicate|does not exist/i.test(err.message)) {
-        throw err;
-      }
-    }
-  }
 
   async up(queryRunner) {
     const isPostgres = queryRunner.connection.options.type === 'postgres';
@@ -27,12 +19,11 @@ export class UniqueMsisdnOnPostbacks1870000000000 {
           AND a.id < b.id
       `);
 
-      await this.safeQuery(
+      await dropIndexIfExists(queryRunner, 'conversion_postbacks', 'IDX_postbacks_msisdn_status');
+      await ensureIndex(
         queryRunner,
-        `DROP INDEX IF EXISTS "IDX_postbacks_msisdn_status"`,
-      );
-      await this.safeQuery(
-        queryRunner,
+        'conversion_postbacks',
+        'UQ_conversion_postbacks_msisdn',
         `CREATE UNIQUE INDEX IF NOT EXISTS "UQ_conversion_postbacks_msisdn"
          ON "conversion_postbacks" ("msisdn")`,
       );
@@ -42,12 +33,11 @@ export class UniqueMsisdnOnPostbacks1870000000000 {
         INNER JOIN \`conversion_postbacks\` b
           ON a.msisdn = b.msisdn AND a.id < b.id
       `);
-      await this.safeQuery(
+      await dropIndexIfExists(queryRunner, 'conversion_postbacks', 'IDX_postbacks_msisdn_status');
+      await ensureIndex(
         queryRunner,
-        `DROP INDEX \`IDX_postbacks_msisdn_status\` ON \`conversion_postbacks\``,
-      );
-      await this.safeQuery(
-        queryRunner,
+        'conversion_postbacks',
+        'UQ_conversion_postbacks_msisdn',
         `CREATE UNIQUE INDEX \`UQ_conversion_postbacks_msisdn\`
          ON \`conversion_postbacks\` (\`msisdn\`)`,
       );
@@ -58,22 +48,20 @@ export class UniqueMsisdnOnPostbacks1870000000000 {
     const isPostgres = queryRunner.connection.options.type === 'postgres';
 
     if (isPostgres) {
-      await this.safeQuery(
+      await dropIndexIfExists(queryRunner, 'conversion_postbacks', 'UQ_conversion_postbacks_msisdn');
+      await ensureIndex(
         queryRunner,
-        `DROP INDEX IF EXISTS "UQ_conversion_postbacks_msisdn"`,
-      );
-      await this.safeQuery(
-        queryRunner,
+        'conversion_postbacks',
+        'IDX_postbacks_msisdn_status',
         `CREATE INDEX IF NOT EXISTS "IDX_postbacks_msisdn_status"
          ON "conversion_postbacks" ("msisdn", "status")`,
       );
     } else {
-      await this.safeQuery(
+      await dropIndexIfExists(queryRunner, 'conversion_postbacks', 'UQ_conversion_postbacks_msisdn');
+      await ensureIndex(
         queryRunner,
-        `DROP INDEX \`UQ_conversion_postbacks_msisdn\` ON \`conversion_postbacks\``,
-      );
-      await this.safeQuery(
-        queryRunner,
+        'conversion_postbacks',
+        'IDX_postbacks_msisdn_status',
         `CREATE INDEX \`IDX_postbacks_msisdn_status\`
          ON \`conversion_postbacks\` (\`msisdn\`, \`status\`)`,
       );

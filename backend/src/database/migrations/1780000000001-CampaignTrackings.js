@@ -1,13 +1,7 @@
+import { ensureConstraint, ensureIndex } from './migration-helpers.js';
+
 export class CampaignTrackings1780000000001 {
   name = 'CampaignTrackings1780000000001';
-
-  async safeQuery(queryRunner, sql) {
-    try {
-      await queryRunner.query(sql);
-    } catch {
-      // ignore
-    }
-  }
 
   async up(queryRunner) {
     const isPostgres = queryRunner.connection.options.type === 'postgres';
@@ -15,7 +9,7 @@ export class CampaignTrackings1780000000001 {
     if (isPostgres) {
       if (!(await queryRunner.hasTable('campaign_trackings'))) {
         await queryRunner.query(`
-          CREATE TABLE "campaign_trackings" (
+          CREATE TABLE IF NOT EXISTS "campaign_trackings" (
             "id" SERIAL NOT NULL,
             "campaign_id" integer NOT NULL,
             "vendor_id" integer NOT NULL,
@@ -25,45 +19,55 @@ export class CampaignTrackings1780000000001 {
           )
         `);
 
-        await this.safeQuery(
+        await ensureIndex(
           queryRunner,
-          `CREATE INDEX "IDX_campaign_trackings_campaign_id" ON "campaign_trackings" ("campaign_id")`,
+          'campaign_trackings',
+          'IDX_campaign_trackings_campaign_id',
+          `CREATE INDEX IF NOT EXISTS "IDX_campaign_trackings_campaign_id" ON "campaign_trackings" ("campaign_id")`,
         );
-        await this.safeQuery(
+        await ensureIndex(
           queryRunner,
-          `CREATE INDEX "IDX_campaign_trackings_vendor_id" ON "campaign_trackings" ("vendor_id")`,
+          'campaign_trackings',
+          'IDX_campaign_trackings_vendor_id',
+          `CREATE INDEX IF NOT EXISTS "IDX_campaign_trackings_vendor_id" ON "campaign_trackings" ("vendor_id")`,
         );
-        await this.safeQuery(
+        await ensureIndex(
           queryRunner,
-          `CREATE INDEX "IDX_campaign_trackings_affiliate_id" ON "campaign_trackings" ("affiliate_id")`,
+          'campaign_trackings',
+          'IDX_campaign_trackings_affiliate_id',
+          `CREATE INDEX IF NOT EXISTS "IDX_campaign_trackings_affiliate_id" ON "campaign_trackings" ("affiliate_id")`,
         );
 
-        await this.safeQuery(
+        await ensureConstraint(
           queryRunner,
+          'campaign_trackings',
+          'FK_campaign_trackings_campaign',
           `ALTER TABLE "campaign_trackings" ADD CONSTRAINT "FK_campaign_trackings_campaign" FOREIGN KEY ("campaign_id") REFERENCES "campaigns"("id") ON DELETE CASCADE ON UPDATE CASCADE`,
         );
-        await this.safeQuery(
+        await ensureConstraint(
           queryRunner,
+          'campaign_trackings',
+          'FK_campaign_trackings_vendor',
           `ALTER TABLE "campaign_trackings" ADD CONSTRAINT "FK_campaign_trackings_vendor" FOREIGN KEY ("vendor_id") REFERENCES "vendors"("id") ON DELETE CASCADE ON UPDATE CASCADE`,
         );
-        await this.safeQuery(
+        await ensureConstraint(
           queryRunner,
+          'campaign_trackings',
+          'FK_campaign_trackings_affiliate',
           `ALTER TABLE "campaign_trackings" ADD CONSTRAINT "FK_campaign_trackings_affiliate" FOREIGN KEY ("affiliate_id") REFERENCES "affiliates"("id") ON DELETE CASCADE ON UPDATE CASCADE`,
         );
 
         if (await queryRunner.hasTable('campaign_vendors')) {
-          await this.safeQuery(
-            queryRunner,
+          await queryRunner.query(
             `INSERT INTO "campaign_trackings" ("campaign_id", "vendor_id") SELECT "campaign_id", "vendor_id" FROM "campaign_vendors"`,
           );
           // Table drops disabled to prevent accidental data loss
-          // await this.safeQuery(queryRunner, `DROP TABLE "campaign_vendors"`);
         }
       }
     } else {
       if (!(await queryRunner.hasTable('campaign_trackings'))) {
         await queryRunner.query(`
-          CREATE TABLE \`campaign_trackings\` (
+          CREATE TABLE IF NOT EXISTS \`campaign_trackings\` (
             \`id\` int NOT NULL AUTO_INCREMENT,
             \`campaign_id\` int NOT NULL,
             \`vendor_id\` int NOT NULL,
@@ -80,12 +84,10 @@ export class CampaignTrackings1780000000001 {
         `);
 
         if (await queryRunner.hasTable('campaign_vendors')) {
-          await this.safeQuery(
-            queryRunner,
+          await queryRunner.query(
             `INSERT INTO \`campaign_trackings\` (\`campaign_id\`, \`vendor_id\`) SELECT \`campaign_id\`, \`vendor_id\` FROM \`campaign_vendors\``,
           );
           // Table drops disabled to prevent accidental data loss
-          // await this.safeQuery(queryRunner, `DROP TABLE \`campaign_vendors\``);
         }
       }
     }

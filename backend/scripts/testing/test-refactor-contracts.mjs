@@ -608,12 +608,62 @@ const rejectResult = await dummyCallbackHandler.processOperatorCallback({});
 assert.strictEqual(rejectResult.success, false);
 assert.strictEqual(rejectResult.skipped, true);
 
-console.log('✅ Postback Callback Service Facade tests PASSED!');
+console.log('🎉 ALL POSTBACK CALLBACK & FIRE TESTS');
+// Verify createPostbackService wires late firePostback cleanly for registerPending({ fireImmediate: true })
+import { postbackService } from '../../src/modules/partners/postback.service.js';
+assert.strictEqual(typeof postbackService.registerPending, 'function');
+assert.strictEqual(typeof postbackService.firePostback, 'function');
+
+// Regression test: createCampaignCrudService.update with trackings passes getter function, not Repo object
+let deletedTrackingsFor = null;
+let insertedTrackingsCount = 0;
+const stubCampaign = {
+  id: 99,
+  name: 'Stub',
+  country: 'KE',
+  operator: 'SAF',
+  trackingId: 'KE-SAF-99',
+  userId: 1,
+  active: false,
+  pages: [],
+  trackings: [],
+};
+const crudWithStubs = createCampaignCrudService({
+  campaignRepo: {
+    findOne: async () => ({ ...stubCampaign }),
+    save: async (c) => c,
+  },
+  trackingRepo: {
+    delete: async (cond) => {
+      deletedTrackingsFor = cond.campaignId;
+    },
+    insert: async (rows) => {
+      insertedTrackingsCount = rows.length;
+    },
+  },
+  pagesService: {
+    ensureCampaignPages: async () => {},
+    ensureOrangeBfFlowGraph: async () => false,
+    pageHasContent: () => true,
+    sanitizeCampaignListItem: (c) => c,
+  },
+});
+await crudWithStubs.update(99, { vendorIds: [10, 20] }, 1);
+assert.strictEqual(deletedTrackingsFor, 99);
+assert.strictEqual(insertedTrackingsCount, 2);
+
+console.log('✅ Postback Callback Service & Update Wiring tests PASSED!');
 
 // 11. Rule of 300 Audit on all Option 1 and Option 2 files
 console.log('--- Verifying Rule of 300 (< 300 LOC) on Option 1 & 2 files ---');
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const repoRoot = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '../../..',
+);
 
 const filesToCheck = [
   'backend/src/modules/analytics/analytics.service.js',
@@ -637,7 +687,8 @@ const filesToCheck = [
 ];
 
 for (const relPath of filesToCheck) {
-  const content = fs.readFileSync(relPath, 'utf8');
+  const fullPath = path.join(repoRoot, relPath);
+  const content = fs.readFileSync(fullPath, 'utf8');
   const lineCount = content.split('\n').length;
   assert.ok(
     lineCount < 300,

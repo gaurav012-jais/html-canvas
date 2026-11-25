@@ -46,9 +46,10 @@ function SubscriptionPage() {
     searchParams.get('tracking_campid') || searchParams.get('trackingCampid') || '',
   )
   const looksLikeOurs = /^[A-Z0-9]+-[A-Z0-9]+-\d+$/i.test(urlCampidRaw.trim()) || /^\d+$/.test(urlCampidRaw.trim())
+  const sameAsTracking = urlTrackingRaw && urlCampidRaw.trim() === urlTrackingRaw.trim()
   let trackingCampid = urlTrackingRaw
   let campid = urlCampidRaw
-  if (!trackingCampid && looksLikeOurs) {
+  if ((!trackingCampid || sameAsTracking) && looksLikeOurs) {
     trackingCampid = urlCampidRaw
     campid = ''
   }

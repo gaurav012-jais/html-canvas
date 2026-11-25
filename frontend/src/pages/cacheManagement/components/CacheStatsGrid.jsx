@@ -2,7 +2,12 @@ import { memo } from 'react'
 import { Server, HardDrive, Clock, CheckCircle2 } from 'lucide-react'
 
 function CacheStatsGrid({ stats, loadingStats }) {
-  const isHealthy = stats?.status === 'ok' || stats?.connected === true
+  const isHealthy = stats?.status === 'ready' || stats?.status === 'ok' || stats?.connected === true
+  const memoryValue = stats?.memoryHuman || stats?.usedMemoryHuman || stats?.memory || 'N/A'
+  const uptimeValue =
+    stats?.uptimeDays != null && stats?.uptimeDays !== 'N/A'
+      ? `${stats.uptimeDays}d`
+      : stats?.uptimeHuman || stats?.uptime || (isHealthy ? 'Active' : 'N/A')
 
   return (
     <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -37,7 +42,7 @@ function CacheStatsGrid({ stats, loadingStats }) {
             {loadingStats ? (
               <span className="text-fg-subtle text-sm">Loading…</span>
             ) : (
-              stats?.usedMemoryHuman || stats?.memory || 'N/A'
+              memoryValue
             )}
           </p>
         </div>
@@ -53,7 +58,7 @@ function CacheStatsGrid({ stats, loadingStats }) {
             {loadingStats ? (
               <span className="text-fg-subtle text-sm">Loading…</span>
             ) : (
-              stats?.uptimeHuman || stats?.uptime || 'N/A'
+              uptimeValue
             )}
           </p>
         </div>

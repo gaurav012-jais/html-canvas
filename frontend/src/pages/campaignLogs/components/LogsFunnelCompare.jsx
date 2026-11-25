@@ -12,7 +12,7 @@ import {
   Legend,
 } from 'recharts'
 import { SectionCard, CustomTooltip } from './LogCards'
-import { MAX_COMPARE_EVENTS } from '../logConstants'
+import { MAX_COMPARE_EVENTS, eventLabel } from '../logConstants'
 import { formatChartLabel } from '../../../utils/date'
 
 export function LogsFunnelCompare({
@@ -95,7 +95,8 @@ export function LogsFunnelCompare({
           <div className="flex flex-wrap gap-1 items-center pt-2 border-t border-gray-100">
             <span className="text-[11px] font-semibold text-gray-400 mr-2 uppercase tracking-wider">Add event:</span>
             {eventTypeOptions
-              .filter((opt) => !compareEvents.includes(opt.id))
+              .map((opt) => (typeof opt === 'string' ? { id: opt, label: eventLabel(opt) } : opt))
+              .filter((opt) => opt?.id && !compareEvents.includes(opt.id))
               .map((opt) => (
                 <button
                   key={opt.id}

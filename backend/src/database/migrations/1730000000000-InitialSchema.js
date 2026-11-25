@@ -5,107 +5,121 @@ export class InitialSchema1730000000000 {
     const isPostgres = queryRunner.connection.options.type === 'postgres';
 
     if (isPostgres) {
-      await queryRunner.query(`
-        CREATE TABLE "users" (
-          "id" SERIAL PRIMARY KEY,
-          "email" varchar NOT NULL UNIQUE,
-          "password" varchar NOT NULL,
-          "name" varchar NOT NULL,
-          "avatar" varchar,
-          "created_at" TIMESTAMP NOT NULL DEFAULT now(),
-          "updated_at" TIMESTAMP NOT NULL DEFAULT now()
-        )
-      `);
+      if (!(await queryRunner.hasTable('users'))) {
+        await queryRunner.query(`
+          CREATE TABLE IF NOT EXISTS "users" (
+            "id" SERIAL PRIMARY KEY,
+            "email" varchar NOT NULL UNIQUE,
+            "password" varchar NOT NULL,
+            "name" varchar NOT NULL,
+            "avatar" varchar,
+            "created_at" TIMESTAMP NOT NULL DEFAULT now(),
+            "updated_at" TIMESTAMP NOT NULL DEFAULT now()
+          )
+        `);
+      }
 
-      await queryRunner.query(`
-        CREATE TABLE "templates" (
-          "id" SERIAL PRIMARY KEY,
-          "name" varchar NOT NULL,
-          "data" json NOT NULL,
-          "user_id" integer,
-          "is_prebuilt" boolean NOT NULL DEFAULT false,
-          "created_at" TIMESTAMP NOT NULL DEFAULT now(),
-          "updated_at" TIMESTAMP NOT NULL DEFAULT now()
-        )
-      `);
+      if (!(await queryRunner.hasTable('templates'))) {
+        await queryRunner.query(`
+          CREATE TABLE IF NOT EXISTS "templates" (
+            "id" SERIAL PRIMARY KEY,
+            "name" varchar NOT NULL,
+            "data" json NOT NULL,
+            "user_id" integer,
+            "is_prebuilt" boolean NOT NULL DEFAULT false,
+            "created_at" TIMESTAMP NOT NULL DEFAULT now(),
+            "updated_at" TIMESTAMP NOT NULL DEFAULT now()
+          )
+        `);
+      }
 
-      await queryRunner.query(`
-        CREATE TABLE "campaigns" (
-          "id" SERIAL PRIMARY KEY,
-          "name" varchar NOT NULL,
-          "country" varchar NOT NULL,
-          "operator" varchar NOT NULL,
-          "service_id" varchar,
-          "active" boolean NOT NULL DEFAULT false,
-          "user_id" integer NOT NULL REFERENCES "users"("id") ON DELETE CASCADE,
-          "created_at" TIMESTAMP NOT NULL DEFAULT now(),
-          "updated_at" TIMESTAMP NOT NULL DEFAULT now()
-        )
-      `);
-      await queryRunner.query(`
-        CREATE UNIQUE INDEX "IDX_CAMPAIGNS_COUNTRY_OPERATOR" ON "campaigns" ("country", "operator")
-      `);
+      if (!(await queryRunner.hasTable('campaigns'))) {
+        await queryRunner.query(`
+          CREATE TABLE IF NOT EXISTS "campaigns" (
+            "id" SERIAL PRIMARY KEY,
+            "name" varchar NOT NULL,
+            "country" varchar NOT NULL,
+            "operator" varchar NOT NULL,
+            "service_id" varchar,
+            "active" boolean NOT NULL DEFAULT false,
+            "user_id" integer NOT NULL REFERENCES "users"("id") ON DELETE CASCADE,
+            "created_at" TIMESTAMP NOT NULL DEFAULT now(),
+            "updated_at" TIMESTAMP NOT NULL DEFAULT now()
+          )
+        `);
+        await queryRunner.query(`
+          CREATE UNIQUE INDEX IF NOT EXISTS "IDX_CAMPAIGNS_COUNTRY_OPERATOR" ON "campaigns" ("country", "operator")
+        `);
+      }
 
-      await queryRunner.query(`
-        CREATE TABLE "campaign_pages" (
-          "id" SERIAL PRIMARY KEY,
-          "campaign_id" integer NOT NULL REFERENCES "campaigns"("id") ON DELETE CASCADE,
-          "page_type" varchar NOT NULL,
-          "template_id" integer REFERENCES "templates"("id") ON DELETE SET NULL,
-          "created_at" TIMESTAMP NOT NULL DEFAULT now(),
-          "updated_at" TIMESTAMP NOT NULL DEFAULT now()
-        )
-      `);
-      await queryRunner.query(`
-        CREATE UNIQUE INDEX "IDX_CAMPAIGN_PAGES_TYPE" ON "campaign_pages" ("campaign_id", "page_type")
-      `);
+      if (!(await queryRunner.hasTable('campaign_pages'))) {
+        await queryRunner.query(`
+          CREATE TABLE IF NOT EXISTS "campaign_pages" (
+            "id" SERIAL PRIMARY KEY,
+            "campaign_id" integer NOT NULL REFERENCES "campaigns"("id") ON DELETE CASCADE,
+            "page_type" varchar NOT NULL,
+            "template_id" integer REFERENCES "templates"("id") ON DELETE SET NULL,
+            "created_at" TIMESTAMP NOT NULL DEFAULT now(),
+            "updated_at" TIMESTAMP NOT NULL DEFAULT now()
+          )
+        `);
+        await queryRunner.query(`
+          CREATE UNIQUE INDEX IF NOT EXISTS "IDX_CAMPAIGN_PAGES_TYPE" ON "campaign_pages" ("campaign_id", "page_type")
+        `);
+      }
 
-      await queryRunner.query(`
-        CREATE TABLE "api_configs" (
-          "id" SERIAL PRIMARY KEY,
-          "campaign_id" integer NOT NULL UNIQUE REFERENCES "campaigns"("id") ON DELETE CASCADE,
-          "user_api" varchar,
-          "blocklist_api" varchar,
-          "subscription_api" varchar,
-          "subscribe_api" varchar,
-          "headers_json" text,
-          "created_at" TIMESTAMP NOT NULL DEFAULT now(),
-          "updated_at" TIMESTAMP NOT NULL DEFAULT now()
-        )
-      `);
+      if (!(await queryRunner.hasTable('api_configs'))) {
+        await queryRunner.query(`
+          CREATE TABLE IF NOT EXISTS "api_configs" (
+            "id" SERIAL PRIMARY KEY,
+            "campaign_id" integer NOT NULL UNIQUE REFERENCES "campaigns"("id") ON DELETE CASCADE,
+            "user_api" varchar,
+            "blocklist_api" varchar,
+            "subscription_api" varchar,
+            "subscribe_api" varchar,
+            "headers_json" text,
+            "created_at" TIMESTAMP NOT NULL DEFAULT now(),
+            "updated_at" TIMESTAMP NOT NULL DEFAULT now()
+          )
+        `);
+      }
 
-      await queryRunner.query(`
-        CREATE TABLE "visits" (
-          "id" SERIAL PRIMARY KEY,
-          "campaign_id" integer,
-          "phone" varchar,
-          "country" varchar,
-          "operator" varchar,
-          "ip_address" varchar,
-          "user_agent" varchar,
-          "landing_url" text,
-          "visit_status" varchar NOT NULL DEFAULT 'VISIT',
-          "page_type" varchar,
-          "created_at" TIMESTAMP NOT NULL DEFAULT now(),
-          "updated_at" TIMESTAMP NOT NULL DEFAULT now()
-        )
-      `);
-      await queryRunner.query(`
-        CREATE INDEX "IDX_VISITS_CAMPAIGN" ON "visits" ("campaign_id")
-      `);
+      if (!(await queryRunner.hasTable('visits'))) {
+        await queryRunner.query(`
+          CREATE TABLE IF NOT EXISTS "visits" (
+            "id" SERIAL PRIMARY KEY,
+            "campaign_id" integer,
+            "phone" varchar,
+            "country" varchar,
+            "operator" varchar,
+            "ip_address" varchar,
+            "user_agent" varchar,
+            "landing_url" text,
+            "visit_status" varchar NOT NULL DEFAULT 'VISIT',
+            "page_type" varchar,
+            "created_at" TIMESTAMP NOT NULL DEFAULT now(),
+            "updated_at" TIMESTAMP NOT NULL DEFAULT now()
+          )
+        `);
+        await queryRunner.query(`
+          CREATE INDEX IF NOT EXISTS "IDX_VISITS_CAMPAIGN" ON "visits" ("campaign_id")
+        `);
+      }
 
-      await queryRunner.query(`
-        CREATE TABLE "visit_events" (
-          "id" SERIAL PRIMARY KEY,
-          "visit_id" integer NOT NULL REFERENCES "visits"("id") ON DELETE CASCADE,
-          "event_type" varchar NOT NULL,
-          "metadata" jsonb,
-          "created_at" TIMESTAMP NOT NULL DEFAULT now()
-        )
-      `);
-      await queryRunner.query(`
-        CREATE INDEX "IDX_EVENTS_VISIT" ON "visit_events" ("visit_id")
-      `);
+      if (!(await queryRunner.hasTable('visit_events'))) {
+        await queryRunner.query(`
+          CREATE TABLE IF NOT EXISTS "visit_events" (
+            "id" SERIAL PRIMARY KEY,
+            "visit_id" integer NOT NULL REFERENCES "visits"("id") ON DELETE CASCADE,
+            "event_type" varchar NOT NULL,
+            "metadata" jsonb,
+            "created_at" TIMESTAMP NOT NULL DEFAULT now()
+          )
+        `);
+        await queryRunner.query(`
+          CREATE INDEX IF NOT EXISTS "IDX_EVENTS_VISIT" ON "visit_events" ("visit_id")
+        `);
+      }
     } else {
       await queryRunner.query(`
         CREATE TABLE IF NOT EXISTS \`users\` (
